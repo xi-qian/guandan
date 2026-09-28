@@ -296,6 +296,7 @@
         ul.innerHTML = `<li class="muted">暂无房间，点「新建房间」开始</li>`;
         return;
       }
+      rooms.sort((a, b) => (a.idle_seconds ?? 0) - (b.idle_seconds ?? 0));
       rooms.forEach((r) => {
         const li = document.createElement("li");
         const idle = r.idle_seconds ?? 0;
@@ -304,7 +305,12 @@
           : idle < 3600
             ? `闲置 ${Math.floor(idle / 60)} 分钟`
             : `闲置 ${Math.floor(idle / 3600)} 小时`;
-        li.innerHTML = `<span>${r.name} · ${r.seats_taken}/4 人 · ${r.phase} · <span class="muted">${idleText}</span></span>`;
+        const stale = idle >= 60;
+        if (stale) li.classList.add("stale");
+        const liveTag = stale
+          ? `<span class="tag-stale">${idleText}</span>`
+          : `<span class="tag-live">● 活跃</span>`;
+        li.innerHTML = `<span>${r.name} · ${r.seats_taken}/4 人 · ${r.phase} ${liveTag}</span>`;
 
         const joinBtn = document.createElement("button");
         joinBtn.className = "primary small";

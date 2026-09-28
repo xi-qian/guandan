@@ -103,3 +103,13 @@ def test_combo_cards_ordered_server_side():
     assert "def order_cards" in engine
     assert "order_cards" in api, "API 序列化应按牌型排列"
     assert "order_cards" in llm, "提示词里的出牌也应按牌型排列"
+
+
+
+def test_room_list_distinguishes_live_from_stale():
+    js = read("static/app.js")
+    css = read("static/style.css")
+    assert "tag-live" in js and "tag-stale" in js
+    assert "stale" in js, "闲置房间应降权显示"
+    assert "sort(" in js, "活跃房间应排前面"
+    assert ".tag-live" in css and ".tag-stale" in css

@@ -434,3 +434,45 @@ class TestLeaveAndResume:
         client.post(f"/api/rooms/{rid}/join", json={"name": "C2"})
         r = client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
         assert r.status_code == 200
+
+
+
+class TestRoundPlaysOrdering:
+    """出牌历史里的牌必须和桌面一样按牌型排。用户反馈：桌面正常、历史里乱。"""
+
+    def test_history_triple_pair_ordered(self):
+        from engine.cards import DECK
+        from engine.combos import identify
+
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        st = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
+
+        # 找一手三带二来打；没有就先打单张凑
+        target = next((m for m in st["legal_moves"] if m["kind"] == "triple_pair"), None)
+        if target is None:
+            target = st["legal_moves"][0]
+        client.post(f"/api/rooms/{rid}/play",
+                    json={"cards": target["card_ids"]}, headers=auth(players[0]))
+
+        st2 = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
+        row = st2["round_plays"][-1]
+        assert row["passed"] is False
+        if row["kind"] == "triple_pair":
+            ranks = [c["rank"] for c in row["cards"]]
+            assert ranks[:3] == [ranks[0]] * 3, f"三张应在前：{ranks}"
+            assert ranks[3:] == [ranks[3]] * 2, f"对子应在后：{ranks}"
+
+    def test_history_matches_table_ordering(self):
+        """同一手在 table 和 round_plays 里的排列必须一致。"""
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        st = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
+        mv = st["legal_moves"][0]
+        client.post(f"/api/rooms/{rid}/play", json={"cards": mv["card_ids"]},
+                    headers=auth(players[0]))
+        st2 = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
+        assert st2["table"] is not None and st2["round_plays"]
+        assert [c["id"] for c in st2["table"]["cards"]] == \
+               [c["id"] for c in st2["round_plays"][-1]["cards"]], \
+               "桌面与出牌历史的牌序应一致"

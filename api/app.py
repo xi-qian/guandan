@@ -156,7 +156,8 @@ def _round_plays(g: Game) -> list[dict[str, Any]]:
                 "kind": e["kind"],
                 "kind_label": KIND_LABEL.get(e["kind"], e["kind"]),
                 "size": e["size"],
-                "cards": [card_json(c) for c in e["cards"]],
+                # 与桌面/提示词一致：按牌型结构排列
+                "cards": [card_json(c) for c in order_cards(e["cards"], e["kind"])],
                 "passed": False,
             })
         elif t == "pass":
