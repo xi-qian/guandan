@@ -443,3 +443,38 @@ class TestBombRarityTable:
         assert probs[0] > 50, "四炸应最常见"
         assert probs[-1] < 0.1, "八炸应最罕见"
         assert probs[2] > probs[3], "同花顺应比六炸常见"
+
+
+
+class TestWildcardsDocumented:
+    """逢人配必须写进规则，否则模型不知道红桃级牌是百搭。"""
+
+    def test_section_present(self):
+        assert "逢人配（百搭）" in RULES_TEXT
+        assert "红桃级牌" in RULES_TEXT
+
+    def test_two_wildcards(self):
+        assert "2 张红桃级牌" in RULES_TEXT
+
+    def test_cannot_be_joker(self):
+        assert "不能当王" in RULES_TEXT
+
+    def test_level_card_of_heart_is_wild(self):
+        assert "打几就是几的红桃是百搭" in RULES_TEXT
+
+    def test_multiple_interpretations_documented(self):
+        assert "同一批牌可能有多种打法" in RULES_TEXT
+        assert "444+33" in RULES_TEXT and "333+44" in RULES_TEXT
+
+    def test_engine_matches_doc(self):
+        from engine.combos import identify, interpretations
+        # 打 2 时红桃 2 是百搭
+        assert identify(cards(("2", "♥"), ("3", "♠")), "2").kind == PAIR
+        # 打 3 时红桃 2 不是百搭
+        assert identify(cards(("2", "♥"), ("3", "♠")), "3") is None
+        # 百搭不能当王
+        assert identify(cards(("BJ", None), ("2", "♥")), "2") is None
+        # 多种解释
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
+        mains = {round(it["main"]) for it in interpretations(h, "2")}
+        assert mains == {3, 4}

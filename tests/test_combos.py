@@ -323,3 +323,96 @@ class TestOrderCards:
         c = identify(ids, "2")
         o = order_cards(c.cards, c.kind)
         assert sorted(o) == sorted(c.cards)
+
+
+class TestWildcards:
+    """逢人配：红桃级牌可当任意牌（不能当王）。
+
+    用户实测踩过：打 2 时红桃 2 被当成普通 2，凑不出牌。
+    """
+
+    def test_wild_alone_is_level_single(self):
+        c = identify(cards(("2", "♥")), "2")
+        assert c.kind == SINGLE
+
+    def test_wild_makes_pair(self):
+        c = identify(cards(("2", "♥"), ("3", "♠")), "2")
+        assert c.kind == PAIR and c.main == 3
+
+    def test_wild_makes_triple(self):
+        c = identify(cards(("2", "♥"), ("3", "♠"), ("3", "♥")), "2")
+        assert c.kind == TRIPLE and c.main == 3
+
+    def test_two_wilds_make_triple(self):
+        c = identify(cards(("2", "♥"), ("2", "♥"), ("3", "♠")), "2")
+        assert c.kind == TRIPLE and c.main == 3
+
+    def test_wild_makes_bomb(self):
+        c = identify(cards(("2", "♥"), ("2", "♥"), ("3", "♠"), ("3", "♥")), "2")
+        assert c.kind == BOMB and c.main == 3 and c.size == 4
+
+    def test_wild_makes_triple_pair_both_ways(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
+        from engine.combos import interpretations
+        kinds = {(it["kind"], round(it["main"])) for it in interpretations(h, "2")}
+        assert ("triple_pair", 4) in kinds, "可当 444+33"
+        assert ("triple_pair", 3) in kinds, "可当 333+44"
+
+    def test_wild_makes_straight(self):
+        c = identify(cards(("2", "♥"), ("3", "♠"), ("4", "♠"), ("5", "♠"), ("6", "♠")), "2")
+        assert c.kind in (STRAIGHT, STRAIGHT_FLUSH)
+
+    def test_wild_makes_pair_run(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"), ("5", "♠"))
+        from engine.combos import interpretations
+        kinds = {it["kind"] for it in interpretations(h, "2")}
+        assert PAIR_RUN in kinds
+
+    def test_wild_makes_triple_run(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"), ("4", "♠"))
+        from engine.combos import interpretations
+        kinds = {it["kind"] for it in interpretations(h, "2")}
+        assert TRIPLE_RUN in kinds
+
+    def test_wild_cannot_be_joker(self):
+        """百搭不能当王：一张王 + 百搭不是对子。"""
+        assert identify(cards(("BJ", None), ("2", "♥")), "2") is None
+
+    def test_wild_not_active_when_not_level(self):
+        """打 3 时红桃 2 不是百搭。"""
+        assert identify(cards(("2", "♥"), ("3", "♠")), "3") is None
+        # 打 3 时红桃 3 才是百搭
+        assert identify(cards(("3", "♥"), ("5", "♠")), "3").kind == PAIR
+
+    def test_wild_heart_level_only(self):
+        """只有红桃级牌是百搭；黑桃级牌不是。"""
+        assert identify(cards(("2", "♠"), ("3", "♠")), "2") is None
+
+    def test_interpretations_lists_all_ways(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("4", "♠"), ("5", "♠"), ("6", "♠"))
+        from engine.combos import interpretations
+        kinds = {it["kind"] for it in interpretations(h, "2")}
+        assert STRAIGHT in kinds and STRAIGHT_FLUSH in kinds, "顺子与同花顺都要列出"
+
+    def test_prefer_selects_interpretation(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
+        c = identify(h, "2", prefer={"kind": "triple_pair", "main": 3})
+        assert c is not None and c.main == 3
+        c = identify(h, "2", prefer={"kind": "triple_pair", "main": 4})
+        assert c is not None and c.main == 4
+        # 指定不存在的解释 → None
+        assert identify(h, "2", prefer={"kind": "bomb"}) is None
+
+    def test_wild_cards_never_dropped(self):
+        """含百搭时牌序调整不许丢牌。"""
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
+        for it in __import__("engine.combos", fromlist=["x"]).interpretations(h, "2"):
+            o = order_cards(it["cards"], it["kind"])
+            assert sorted(o) == sorted(it["cards"]), "order_cards 不能丢牌"
+            assert len(o) == 5
+
+    def test_enumerate_includes_wild_usages(self):
+        h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
+        from engine.combos import enumerate_combos
+        kinds = {c.kind for c in enumerate_combos(h, "2")}
+        assert TRIPLE_PAIR in kinds and PAIR in kinds and SINGLE in kinds

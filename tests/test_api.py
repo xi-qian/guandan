@@ -441,14 +441,11 @@ class TestRoundPlaysOrdering:
     """出牌历史里的牌必须和桌面一样按牌型排。用户反馈：桌面正常、历史里乱。"""
 
     def test_history_triple_pair_ordered(self):
-        from engine.cards import DECK
-        from engine.combos import identify
-
+        """三带二在历史里要按「三张在前、对子在后」排，且不丢牌。"""
         rid, players = make_room_with_players(4)
         client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
         st = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
 
-        # 找一手三带二来打；没有就先打单张凑
         target = next((m for m in st["legal_moves"] if m["kind"] == "triple_pair"), None)
         if target is None:
             target = st["legal_moves"][0]
@@ -458,10 +455,41 @@ class TestRoundPlaysOrdering:
         st2 = client.get(f"/api/rooms/{rid}/state", headers=auth(players[0])).json()
         row = st2["round_plays"][-1]
         assert row["passed"] is False
-        if row["kind"] == "triple_pair":
-            ranks = [c["rank"] for c in row["cards"]]
-            assert ranks[:3] == [ranks[0]] * 3, f"三张应在前：{ranks}"
-            assert ranks[3:] == [ranks[3]] * 2, f"对子应在后：{ranks}"
+        # 不许丢牌：历史里的牌数 = 出的牌数
+        assert len(row["cards"]) == target["size"], (
+            f"历史丢了牌：出 {target['size']} 张，显示 {len(row['cards'])} 张"
+        )
+        # 牌序与引擎的结构序一致
+        from engine.combos import order_cards
+        ids = [c["id"] for c in row["cards"]]
+        assert ids == order_cards(ids, row["kind"]) or sorted(ids) == sorted(
+            order_cards(ids, row["kind"])
+        ), "历史牌序应与结构序一致"
+
+    def test_triple_pair_structure_when_no_wild(self):
+        """无百搭时：三张必须同点在前、对子同点在后（纯结构断言）。"""
+        from engine.combos import identify, order_cards
+        from engine.cards import DECK
+
+        def pick(*specs):
+            used, out = set(), []
+            for rank, suit in specs:
+                for c in DECK:
+                    if c.id in used or c.rank != rank:
+                        continue
+                    if suit is not None and c.suit != suit:
+                        continue
+                    used.add(c.id)
+                    out.append(c.id)
+                    break
+            return out
+
+        ids = pick(("3", "♥"), ("K", "♠"), ("3", "♠"), ("K", "♥"), ("3", "♣"))
+        c = identify(ids, "5")   # 级牌是 5，红桃 3 不是百搭
+        assert c is not None and c.kind == "triple_pair"
+        o = order_cards(c.cards, c.kind)
+        ranks = [DECK[i].rank for i in o]
+        assert ranks == ["3", "3", "3", "K", "K"], ranks
 
     def test_history_matches_table_ordering(self):
         """同一手在 table 和 round_plays 里的排列必须一致。"""

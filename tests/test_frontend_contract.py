@@ -113,3 +113,15 @@ def test_room_list_distinguishes_live_from_stale():
     assert "stale" in js, "闲置房间应降权显示"
     assert "sort(" in js, "活跃房间应排前面"
     assert ".tag-live" in css and ".tag-stale" in css
+
+
+
+def test_interpret_picker_wired():
+    js = read("static/app.js")
+    api = read("api/app.py")
+    html = read("static/index.html")
+    css = read("static/style.css")
+    assert "/interpret" in js and "/interpret" in api
+    assert "as_kind" in js and "as_kind" in api
+    assert "showInterpretPicker" in js
+    assert ".picker-overlay" in css

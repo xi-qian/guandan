@@ -421,17 +421,66 @@
     renderJoin();
   }
 
+  async function submitPlay(cards, asKind, asMain) {
+    const body = { cards };
+    if (asKind) {
+      body.as_kind = asKind;
+      if (asMain != null) body.as_main = asMain;
+    }
+    await api(`/api/rooms/${state.roomId}/play`, { method: "POST", body: JSON.stringify(body) });
+    state.selected.clear();
+    state.hintIndex = 0;
+    await poll();
+  }
+
+  function showInterpretPicker(list, onPick) {
+    // 同一批牌有多种打法（百搭可变），让玩家选
+    const overlay = document.createElement("div");
+    overlay.className = "picker-overlay";
+    const box = document.createElement("div");
+    box.className = "picker-box";
+    box.innerHTML = `<h3>这批牌有 ${list.length} 种打法</h3>
+      <p class="muted">红桃级牌是百搭，可以当成不同牌。选你要出的那种：</p>`;
+    list.forEach((it, i) => {
+      const btn = document.createElement("button");
+      btn.className = "picker-item";
+      const mainTxt = it.main ? ` · 主点 ${Number(it.main).toFixed(it.main % 1 ? 1 : 0)}` : "";
+      btn.innerHTML = `<strong>${it.kind_label}</strong><span class="muted">${it.size}张${mainTxt}</span>`;
+      btn.addEventListener("click", () => {
+        overlay.remove();
+        onPick(it);
+      });
+      box.appendChild(btn);
+    });
+    const cancel = document.createElement("button");
+    cancel.className = "ghost";
+    cancel.textContent = "取消";
+    cancel.addEventListener("click", () => overlay.remove());
+    box.appendChild(cancel);
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+  }
+
   async function doPlay() {
     const cards = [...state.selected];
     if (!cards.length) return;
     try {
-      await api(`/api/rooms/${state.roomId}/play`, {
+      // 百搭可能有多种用法：先问服务端有几种解释
+      const opts = await api(`/api/rooms/${state.roomId}/interpret`, {
         method: "POST",
         body: JSON.stringify({ cards }),
       });
-      state.selected.clear();
-      state.hintIndex = 0;
-      await poll();
+      if (!opts || opts.length === 0) {
+        toast("这不是合法牌型");
+        return;
+      }
+      if (opts.length === 1) {
+        await submitPlay(cards, opts[0].kind, opts[0].main);
+        return;
+      }
+      showInterpretPicker(opts, (it) => {
+        submitPlay(cards, it.kind, it.main).catch((e) => toast(e.message));
+      });
     } catch (e) {
       toast(e.message);
     }

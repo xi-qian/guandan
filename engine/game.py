@@ -15,7 +15,7 @@ from .cards import (
     LEVEL_ORDER,
     NATURAL,
 )
-from .combos import Combo, beats, identify, legal_moves as _legal_moves
+from .combos import Combo, beats, identify, interpretations, legal_moves as _legal_moves
 
 PHASE_PLAY = "play"
 PHASE_RETURN_TRIBUTE = "return_tribute"
@@ -211,12 +211,16 @@ class Game:
         """级牌全桌统一，与座位/队伍无关。"""
         return self.level_rank
 
+    def interpretations(self, card_ids: Sequence[int]) -> list[dict]:
+        """这组牌的全部打法解释（百搭可变时），供 UI 让玩家选。"""
+        return interpretations(card_ids, self.level_rank)
+
     def legal_moves(self, seat: int) -> list[Combo]:
         if self.phase != PHASE_PLAY or self.current != seat:
             return []
         return _legal_moves(self.hands[seat], self.level_of(seat), self.table)
 
-    def play(self, seat: int, card_ids: Sequence[int]) -> Combo:
+    def play(self, seat: int, card_ids: Sequence[int], prefer: dict | None = None) -> Combo:
         if self.phase != PHASE_PLAY:
             raise IllegalMove("当前不能出牌")
         if seat != self.current:
@@ -227,7 +231,7 @@ class Game:
         hand = set(self.hands[seat])
         if any(c not in hand for c in cards):
             raise IllegalMove("含有不是你手里的牌")
-        combo = identify(cards, self.level_of(seat))
+        combo = identify(cards, self.level_of(seat), prefer=prefer)
         if combo is None:
             raise IllegalMove("不是合法牌型")
         if self.table is not None and self.table_seat == seat:
@@ -242,7 +246,7 @@ class Game:
         self._emit(
             "play",
             seat=seat,
-            cards=list(cards),
+            cards=list(combo.cards),   # 已按牌型结构排好
             kind=combo.kind,
             size=combo.size,
             main=combo.main,

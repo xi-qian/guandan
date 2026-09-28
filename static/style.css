@@ -323,3 +323,41 @@ hr { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
   margin-left: 6px;
   white-space: nowrap;
 }
+
+
+/* 百搭多种打法时的选择器 */
+.picker-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  padding: 16px;
+}
+.picker-box {
+  background: #173d27;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 18px;
+  width: min(420px, 100%);
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow);
+}
+.picker-box h3 { margin: 0; font-size: 17px; }
+.picker-box .muted { margin: 0 0 4px; }
+.picker-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--line);
+  color: #fff;
+  text-align: left;
+}
+.picker-item:hover { border-color: var(--accent); }

@@ -130,7 +130,7 @@ def combo_json(combo: Combo | None, seat: int | None) -> dict[str, Any] | None:
         "kind": combo.kind,
         "kind_label": KIND_LABEL.get(combo.kind, combo.kind),
         "size": combo.size,
-        "cards": [card_json(c) for c in order_cards(combo.cards, combo.kind)],
+        "cards": [card_json(c) for c in combo.cards],   # identify 时已按牌型排
     }
 
 
@@ -157,7 +157,7 @@ def _round_plays(g: Game) -> list[dict[str, Any]]:
                 "kind_label": KIND_LABEL.get(e["kind"], e["kind"]),
                 "size": e["size"],
                 # 与桌面/提示词一致：按牌型结构排列
-                "cards": [card_json(c) for c in order_cards(e["cards"], e["kind"])],
+                "cards": [card_json(c) for c in e["cards"]],   # 事件里已按牌型排
                 "passed": False,
             })
         elif t == "pass":
@@ -281,6 +281,9 @@ class JoinRoom(BaseModel):
 
 class PlayBody(BaseModel):
     cards: list[int]
+    # 百搭有多种用法时，指定按哪种解释出牌
+    as_kind: Optional[str] = None
+    as_main: Optional[float] = None
 
 
 class ReturnTribute(BaseModel):
@@ -465,10 +468,15 @@ def play_cards(
         raise HTTPException(400, "对局未开始")
     g = room.game
     assert g is not None
+    prefer = None
+    if body.as_kind:
+        prefer = {"kind": body.as_kind, "main": body.as_main}
     try:
-        combo = g.play(me.seat, body.cards)
+        combo = g.play(me.seat, body.cards, prefer=prefer)
     except IllegalMove as e:
         raise HTTPException(400, str(e))
+    if prefer and combo is None:
+        raise HTTPException(400, "指定的打法不成立")
     return {"ok": True, "played": combo_json(combo, me.seat), "state": state_for(room, me)}
 
 
@@ -487,6 +495,34 @@ def pass_turn(
     except IllegalMove as e:
         raise HTTPException(400, str(e))
     return {"ok": True, "state": state_for(room, me)}
+
+
+class InterpretBody(BaseModel):
+    cards: list[int]
+
+
+@app.post("/api/rooms/{room_id}/interpret")
+def interpret_cards(
+    room_id: str, body: InterpretBody,
+    authorization: Optional[str] = Header(default=None),
+) -> list[dict[str, Any]]:
+    """这组牌能按哪几种打法出（百搭有多种用法时给玩家选）。"""
+    room = get_room(room_id)
+    auth(room, authorization)
+    if not room.started():
+        return []
+    g = room.game
+    assert g is not None
+    out = []
+    for it in g.interpretations(body.cards):
+        out.append({
+            "kind": it["kind"],
+            "kind_label": KIND_LABEL.get(it["kind"], it["kind"]),
+            "main": it["main"],
+            "size": it["size"],
+            "cards": [card_json(c) for c in it["cards"]],
+        })
+    return out
 
 
 @app.post("/api/rooms/{room_id}/return-tribute")
