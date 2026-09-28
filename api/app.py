@@ -35,6 +35,7 @@ class Player:
     name: str
     token: str
     seat: int
+    left: bool = False   # 主动离席；牌局中保留座位供同名重入
 
 
 @dataclass
@@ -314,6 +315,29 @@ def list_rooms() -> list[dict[str, Any]]:
     ]
 
 
+@app.post("/api/rooms/{room_id}/leave")
+def leave_room(
+    room_id: str, authorization: Optional[str] = Header(default=None)
+) -> dict[str, Any]:
+    """主动离席。
+
+    未开局：直接释放座位与名字，可以重新加入。
+    已开局：座位保留、标记离席，可用同名重入续接（免得半路退出就永远进不来）。
+    """
+    room = get_room(room_id)
+    me = auth(room, authorization)
+    if room.started() and room.game.phase in ("play", "return_tribute"):
+        me.left = True
+        return {"ok": True, "seat_held": True, "note": "牌局进行中，座位已保留，可同名重入"}
+    # 未开局或已结束：彻底释放
+    room.seats[me.seat] = None
+    room.players.pop(me.token, None)
+    if not room.players:
+        rooms.pop(room_id, None)
+        return {"ok": True, "seat_held": False, "room_removed": True}
+    return {"ok": True, "seat_held": False}
+
+
 @app.post("/api/rooms/{room_id}/close")
 def close_room(room_id: str) -> dict[str, Any]:
     """手动关闭房间。本服务无用户系统，任何能访问服务的人都可以关。
@@ -336,8 +360,20 @@ def join_room(room_id: str, body: JoinRoom) -> dict[str, Any]:
     name = body.name.strip()
     if not name:
         raise HTTPException(400, "名字不能为空")
-    if any(p.name == name for p in room.players.values()):
-        raise HTTPException(400, "该名字已被使用")
+    # 同名重入：若该名字的玩家主动离席过，换新 token 回到原座位
+    for old_token, p in list(room.players.items()):
+        if p.name == name:
+            if p.left:
+                token = secrets.token_hex(16)
+                p.left = False
+                p.token = token
+                del room.players[old_token]
+                room.players[token] = p
+                room.seats[p.seat] = p
+                return {"token": token, "seat": p.seat, "room_id": room_id,
+                        "resumed": True}
+            raise HTTPException(400, "该名字已被使用")
+
     free = next((i for i, s in enumerate(room.seats) if s is None), None)
     if free is None:
         raise HTTPException(400, "座位已满")

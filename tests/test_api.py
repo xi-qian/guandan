@@ -360,3 +360,77 @@ class TestRoomLifecycle:
         rooms[rid].last_activity = _t.time() - IDLE_TTL_SECONDS - 10
         client.get("/api/rooms")          # 列表接口顺带清理
         assert rid not in rooms
+
+
+
+class TestLeaveAndResume:
+    """离席后必须能回来。实测踩过：前端只清 localStorage 不通知服务端，
+    座位和名字一直占着，退出就进不去了。"""
+
+    def test_leave_before_start_frees_seat_and_name(self):
+        rid, players = make_room_with_players(2)
+        r = client.post(f"/api/rooms/{rid}/leave", headers=auth(players[0]))
+        assert r.status_code == 200
+        assert r.json()["seat_held"] is False
+
+        # 同名能重新加入
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "P0"})
+        assert j.status_code == 200
+        assert j.json()["seat"] == 0
+
+    def test_leave_without_token_rejected(self):
+        rid, _ = make_room_with_players(1)
+        assert client.post(f"/api/rooms/{rid}/leave").status_code == 401
+
+    def test_leave_midgame_holds_seat(self):
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        r = client.post(f"/api/rooms/{rid}/leave", headers=auth(players[1]))
+        assert r.json()["seat_held"] is True
+
+    def test_rejoin_midgame_resumes_same_seat(self):
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[1]))
+        client.post(f"/api/rooms/{rid}/leave", headers=auth(players[1]))
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "P1"})
+        assert j.status_code == 200
+        assert j.json()["resumed"] is True
+        assert j.json()["seat"] == 1
+
+    def test_rejoin_midgame_gets_valid_token(self):
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        old_token = players[2]["token"]
+        client.post(f"/api/rooms/{rid}/leave", headers=auth(players[2]))
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "P2"})
+        new_token = j.json()["token"]
+        assert new_token != old_token
+        # 新 token 能查状态，旧 token 失效
+        assert client.get(f"/api/rooms/{rid}/state",
+                          headers={"Authorization": f"Bearer {new_token}"}).status_code == 200
+        assert client.get(f"/api/rooms/{rid}/state",
+                          headers={"Authorization": f"Bearer {old_token}"}).status_code == 401
+
+    def test_duplicate_name_still_rejected_when_active(self):
+        rid, _ = make_room_with_players(2)
+        r = client.post(f"/api/rooms/{rid}/join", json={"name": "P0"})
+        assert r.status_code == 400
+
+    def test_last_player_leaving_removes_room(self):
+        rid, players = make_room_with_players(1)
+        r = client.post(f"/api/rooms/{rid}/leave", headers=auth(players[0]))
+        assert r.json().get("room_removed") is True
+        assert client.post(f"/api/rooms/{rid}/join", json={"name": "X"}).status_code == 404
+
+    def test_seat_freed_by_leave_is_reusable(self):
+        """离席释放的座位能被别人坐。"""
+        rid, players = make_room_with_players(2)   # 占 0、1
+        client.post(f"/api/rooms/{rid}/leave", headers=auth(players[1]))
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "新人"})
+        assert j.status_code == 200
+        assert j.json()["seat"] == 1, "离席腾出的座位应可复用"
+        # 补齐 4 人即可开局
+        client.post(f"/api/rooms/{rid}/join", json={"name": "C1"})
+        client.post(f"/api/rooms/{rid}/join", json={"name": "C2"})
+        r = client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        assert r.status_code == 200

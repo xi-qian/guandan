@@ -296,6 +296,7 @@
       state.token = joined.token;
       state.roomId = rid;
       state.name = name;
+      if (joined.resumed) toast("已回到原来的座位");
       localStorage.setItem("gd_token", state.token);
       localStorage.setItem("gd_room", rid);
       localStorage.setItem("gd_name", name);
@@ -332,6 +333,10 @@
   }
 
   function leave() {
+    // 先告诉服务端离席，否则座位和名字一直占着，进不去
+    if (state.token && state.roomId) {
+      api(`/api/rooms/${state.roomId}/leave`, { method: "POST" }).catch(() => {});
+    }
     stopPolling();
     state.token = "";
     state.roomId = "";
