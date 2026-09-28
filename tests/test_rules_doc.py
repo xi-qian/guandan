@@ -62,7 +62,7 @@ class TestRulesTextCoverage:
         "needle",
         [
             "108 张", "每人 27 张",  # 用牌
-            "四炸 < 五炸 < 同花顺 < 六炸",  # 炸弹层级
+            "四炸 < 五炸 < **同花顺** < 六炸",  # 炸弹层级
             "天王炸", "压一切",
             "级牌", "A 之上", "小王之下",
             "JQKA2", "A2345", "10JQKA",  # 顺子两头
@@ -361,3 +361,85 @@ class TestNoSeatArithmeticInPrompt:
     def test_points_at_explicit_labels(self):
         assert "【队友】/【对手】标注" in SYSTEM_PROMPT
         assert "不要自己做座位运算" in SYSTEM_PROMPT
+
+
+
+class TestStraightFlushValue:
+    """同花顺的价值必须写清。实测踩过：模型按「先比张数」误以为同花顺=五炸档，
+    把它当廉价炸弹压普通顺子。"""
+
+    def test_ladder_says_straight_flush_beats_five_bomb(self):
+        assert "五炸 < **同花顺** < 六炸" in RULES_TEXT or "五炸 < 同花顺 < 六炸" in RULES_TEXT
+
+    def test_explicitly_spelled_out(self):
+        assert "比任何五炸、任何四炸都大" in RULES_TEXT
+        assert "价值接近六炸" in RULES_TEXT
+
+    def test_count_rule_scoped_to_same_rank_bombs(self):
+        assert "只适用于**同点炸弹之间**" in RULES_TEXT
+        assert "不参与「按张数」的比较" in RULES_TEXT
+
+    def test_calls_out_the_cheap_bomb_misreading(self):
+        assert "同花顺不是「廉价炸弹」" in RULES_TEXT
+
+    def test_engine_agrees_with_documented_ladder(self):
+        lv = "2"
+        b5 = identify(cards(("3", "♠"), ("3", "♥"), ("3", "♣"), ("3", "♦"), ("3", "♠")), lv)
+        sf = identify(cards(("3", "♥"), ("4", "♥"), ("5", "♥"), ("6", "♥"), ("7", "♥")), lv)
+        b4 = identify(cards(("A", "♠"), ("A", "♥"), ("A", "♣"), ("A", "♦")), lv)
+        assert beats(sf, b5), "文档说同花顺大于五炸"
+        assert beats(sf, b4), "文档说同花顺大于四炸"
+
+
+
+class TestBombRarityTable:
+    """稀有度表：20 万次模拟得出的 27 张手牌出现概率。"""
+
+    TABLE = [
+        ("四炸", "84.8%", "几乎人人都有"),
+        ("五炸", "27.1%", "1/4"),
+        ("同花顺", "31.3%", "1/3"),
+        ("六炸", "3.8%", "1/26"),
+        ("七炸", "0.27%", "1/376"),
+        ("天王炸", "0.33%", "1/301"),
+        ("八炸", "0.01%", "1/10345"),
+    ]
+
+    @pytest.mark.parametrize("name,prob,odds", TABLE)
+    def test_each_bomb_listed_with_probability(self, name, prob, odds):
+        assert name in RULES_TEXT
+        assert prob in RULES_TEXT, f"{name} 的概率 {prob} 未写进文档"
+        assert odds in RULES_TEXT
+
+    def test_strength_and_rarity_are_distinct(self):
+        assert "强度 ≠ 稀有度" in RULES_TEXT
+
+    def test_four_bomb_not_treated_as_scarce(self):
+        assert "几乎人人都有" in RULES_TEXT
+        assert "不是稀缺资源" in RULES_TEXT
+
+    def test_straight_flush_rarity_called_out(self):
+        assert "稀有度只有 1/3" in RULES_TEXT
+        assert "常见不等于廉价" in RULES_TEXT
+
+    def test_real_bombs_flagged_as_scarce(self):
+        assert "六炸以上才是真稀缺" in RULES_TEXT
+
+    def test_straight_flush_commoner_than_five_bomb(self):
+        """反直觉点：同花顺比五炸常见，但强度更高。必须写明免得模型据此低估。"""
+        assert "比五炸还常见" in RULES_TEXT
+        assert "常见不等于弱" in RULES_TEXT
+
+    def test_rarity_table_ordered_by_strength(self):
+        """稀有度表里的强度列必须从低到高，别把表写反。"""
+        seg = RULES_TEXT[RULES_TEXT.index("各种炸弹的稀有度"):]
+        idx = [seg.index(f"| {n} |") for n, _, _ in self.TABLE]
+        assert idx == sorted(idx), "稀有度表应按强度从低到高排列"
+
+    def test_probabilities_are_descending_in_rarity(self):
+        """除同花顺/五炸顺序外，稀有度大体递减。"""
+        probs = [float(p.rstrip("%")) for _, p, _ in self.TABLE]
+        # 四炸 84.8 → 五炸 27.1 → 同花顺 31.2 → 六炸 3.8 → ...
+        assert probs[0] > 50, "四炸应最常见"
+        assert probs[-1] < 0.1, "八炸应最罕见"
+        assert probs[2] > probs[3], "同花顺应比六炸常见"
