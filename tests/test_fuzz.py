@@ -54,8 +54,18 @@ def play_random_game(seed: int, max_actions: int = 5000) -> Game:
         assert len(all_cards) == len(set(all_cards)), INVARIANT_MSG
         assert 0 <= g.current <= 3, INVARIANT_MSG
         assert len(g.finished) == len(set(g.finished)), INVARIANT_MSG
-        # 头游/二游/三游必须已空手；末游（第 4 名）收局时手里仍有牌
-        for s in g.finished[:3]:
+        # 真正打完的必须空手；双上按张数裁定的 3/4 名可能还有牌。
+        # 事件跨局累积，只看最近一次发牌之后的。
+        start = 0
+        for i, e in enumerate(g.events):
+            if e.get("type") == "deal":
+                start = i
+        out_by_play = [
+            e["seat"] for e in g.events[start:]
+            if e["type"] == "finish"
+            and e.get("reason") not in ("double_up_by_card_count", "last_remaining")
+        ]
+        for s in out_by_play:
             assert not g.hands[s], f"已出完的座位 {s} 不应还有牌"
         if g.phase == "play":
             for s in range(4):
@@ -65,7 +75,7 @@ def play_random_game(seed: int, max_actions: int = 5000) -> Game:
                     assert g.hands[s], f"未出完的座位 {s} 不应为空"
             assert g.current not in g.finished, "不该轮到已出完的玩家"
         else:
-            assert len(g.finished) in (0, 4), "非出牌阶段时名次应已定完"
+            assert len(g.finished) in (0, 4), "非出牌阶段名次应已定完"
 
     raise AssertionError(f"seed={seed} 未能在 {max_actions} 步内结束")
 

@@ -257,9 +257,18 @@ class Game:
             rank = len(self.finished)
             self._emit("finish", seat=seat, rank=rank)
             remaining = [s for s in range(4) if self.hands[s]]
+
+            # 双上：一方包揽 1、2 名，大局已定，立即收局。
+            # 剩下同队两人按剩余张数定 3/4 名，不再往下打。
+            if len(self.finished) == 2 and team_of(self.finished[0]) == team_of(self.finished[1]):
+                self._settle_double_up(seat)
+                return combo
+
             if len(self.finished) == 3:
                 self.finished.append(remaining[0])
-                self._emit("finish", seat=remaining[0], rank=4)
+                self._emit("finish", seat=remaining[0], rank=4,
+                           reason="last_remaining",
+                           cards_left=len(self.hands[remaining[0]]))
                 self._end_round()
                 return combo
 
@@ -314,6 +323,25 @@ class Game:
         return self._next_active(seat)
 
     # ------------------------------------------------------------ 结算
+
+    def _settle_double_up(self, last_finisher: int) -> None:
+        """双上后给剩下两人排名：张少者三游，同数按出牌顺序。"""
+        rest = [s for s in range(4) if self.hands[s]]
+        assert len(rest) == 2
+        try:
+            nxt = self._next_active(last_finisher)
+        except IllegalMove:
+            nxt = rest[0]
+        # 剩余张数少者名次靠前；同数则按「本该谁先出」
+        rest.sort(key=lambda s: (len(self.hands[s]), 0 if s == nxt else 1, s))
+        third, fourth = rest[0], rest[1]
+        self.finished.append(third)
+        self.finished.append(fourth)
+        self._emit("finish", seat=third, rank=3,
+                   reason="double_up_by_card_count", cards_left=len(self.hands[third]))
+        self._emit("finish", seat=fourth, rank=4,
+                   reason="double_up_by_card_count", cards_left=len(self.hands[fourth]))
+        self._end_round()
 
     def _end_round(self) -> None:
         order = list(self.finished)

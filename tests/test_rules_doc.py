@@ -478,3 +478,65 @@ class TestWildcardsDocumented:
         h = cards(("2", "♥"), ("3", "♠"), ("3", "♥"), ("4", "♠"), ("4", "♥"))
         mains = {round(it["main"]) for it in interpretations(h, "2")}
         assert mains == {3, 4}
+
+
+
+class TestDoubleUpSettlement:
+    """双上立即收局——用户反馈：大局已定后剩下两人还在打。"""
+
+    def test_documented(self):
+        assert "双上即收局" in RULES_TEXT
+        assert "剩余张数" in RULES_TEXT
+        assert "张少者三游" in RULES_TEXT
+
+    def test_engine_ends_immediately(self):
+        g = Game(seed=3)
+        g.start()
+        g.hands[0] = [g.hands[0][0]]
+        g.current = 0
+        g.play(0, [g.hands[0][0]])
+        for _ in range(3):
+            if g.table is not None:
+                g.pass_(g.current)
+        g.hands[2] = [g.hands[2][0]]
+        g.current = 2
+        g.play(2, [g.hands[2][0]])
+        assert g.phase == "round_end"
+        assert g.finished[:2] == [0, 2]
+
+    def test_ranks_by_remaining_cards(self):
+        g = Game(seed=7)
+        g.start()
+        g.hands[1] = g.hands[1][:3]
+        g.hands[3] = g.hands[3][:8]
+        g.hands[0] = [g.hands[0][0]]
+        g.current = 0
+        g.play(0, [g.hands[0][0]])
+        for _ in range(3):
+            if g.table is not None:
+                g.pass_(g.current)
+        g.hands[2] = [g.hands[2][0]]
+        g.current = 2
+        g.play(2, [g.hands[2][0]])
+        order = g.last_round["finish_order"]
+        assert order[:2] == [0, 2]
+        assert order[2] == 1, f"张少者三游：{order}"
+        assert order[3] == 3
+
+    def test_settled_ranks_keep_their_cards(self):
+        """裁定出的 3/4 名手里还有牌，事件要标明来源。"""
+        g = Game(seed=7)
+        g.start()
+        g.hands[0] = [g.hands[0][0]]
+        g.current = 0
+        g.play(0, [g.hands[0][0]])
+        for _ in range(3):
+            if g.table is not None:
+                g.pass_(g.current)
+        g.hands[2] = [g.hands[2][0]]
+        g.current = 2
+        g.play(2, [g.hands[2][0]])
+        ev = [e for e in g.events
+              if e["type"] == "finish" and e.get("reason") == "double_up_by_card_count"]
+        assert len(ev) == 2
+        assert all("cards_left" in e for e in ev)

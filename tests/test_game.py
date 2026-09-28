@@ -459,19 +459,63 @@ class TestJiefeng:
         assert g.current == 0, "出牌者还有牌，应自己继续领出"
 
     def test_fallback_to_next_when_partner_also_finished(self):
+        """队友也出完时轮到下家。
+
+        注：实战中这个分支已不可达——队友俩都出完即为双上，会提前收局。
+        保留作防御，直接验 _lead_after_win。
+        """
         g = Game(seed=21)
         g.start()
-        # 队友 2 已出完；座位 0 现在打完最后一张
-        g.hands[2] = []
-        g.finished = [2]
+        g.hands[2] = []          # 队友（座2）已出完
+        g.hands[0] = []          # 赢家（座0）也已出完
+        g.finished = [2, 0]
+        assert g._lead_after_win(0) == 1, "队友出完 → 轮到下家"
+
+    def test_lead_after_win_partner_still_in(self):
+        g = Game(seed=21)
+        g.start()
+        g.hands[0] = []          # 赢家自己已出完
+        assert g._lead_after_win(0) == 2, "队友还在 → 队友接风"
+
+    def test_lead_after_win_winner_still_in(self):
+        g = Game(seed=21)
+        g.start()
+        assert g._lead_after_win(0) == 0, "赢家还有牌 → 自己继续领出"
+
+    def test_double_up_ends_round_immediately(self):
+        """一方包揽 1、2 名后立即收局，不再往下打。"""
+        g = Game(seed=3)
+        g.start()
         g.hands[0] = [g.hands[0][0]]
         g.current = 0
-        card = g.hands[0][0]
-        g.play(0, [card])
-        assert g.finished[:2] == [2, 0]
-        for _ in range(5):
-            if g.table is None:
-                break
-            g.pass_(g.current)
-        assert g.table is None
-        assert g.current == 1, "队友也出完了，才轮到下家"
+        g.play(0, [g.hands[0][0]])
+        for _ in range(3):
+            if g.table is not None:
+                g.pass_(g.current)
+        g.hands[2] = [g.hands[2][0]]
+        g.current = 2
+        g.play(2, [g.hands[2][0]])
+        assert g.phase == "round_end", "双上应立即收局"
+        assert g.finished[0] == 0 and g.finished[1] == 2
+        # 3/4 名按剩余张数裁定，手里还有牌
+        assert g.hands[1] or g.hands[3]
+
+    def test_double_up_ranks_by_card_count(self):
+        g = Game(seed=7)
+        g.start()
+        g.hands[1] = g.hands[1][:2]      # 座1 剩 2 张
+        g.hands[3] = g.hands[3][:5]      # 座3 剩 5 张
+        g.hands[0] = [g.hands[0][0]]
+        g.current = 0
+        g.play(0, [g.hands[0][0]])
+        for _ in range(3):
+            if g.table is not None:
+                g.pass_(g.current)
+        g.hands[2] = [g.hands[2][0]]
+        g.current = 2
+        g.play(2, [g.hands[2][0]])
+        order = g.last_round["finish_order"]
+        assert order[:2] == [0, 2], f"双上的两家：{order}"
+        assert order[2] == 1, f"张少的座1应是三游：{order}"
+        assert order[3] == 3
+
