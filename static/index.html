@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>掼蛋</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- 加入 / 创建 -->
+    <section id="screen-join" class="screen">
+      <h1>掼蛋</h1>
+      <p class="muted">4 人两队对家配合 · 两副牌 · 先过 A 者胜</p>
+      <div class="panel">
+        <label>你的名字
+          <input id="input-name" type="text" maxlength="12" placeholder="例如：阿明" autocomplete="off" />
+        </label>
+        <label>房间号
+          <input id="input-room" type="text" maxlength="16" placeholder="留空则新建房间" autocomplete="off" />
+        </label>
+        <button id="btn-join" class="primary">进入房间</button>
+        <button id="btn-create" class="ghost">新建房间</button>
+        <p id="join-error" class="error" hidden></p>
+        <hr />
+        <div>
+          <p class="muted">当前房间</p>
+          <ul id="room-list" class="room-list"></ul>
+          <button id="btn-refresh-rooms" class="ghost small">刷新</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 牌桌 -->
+    <section id="screen-table" class="screen" hidden>
+      <header class="topbar">
+        <div>
+          <strong id="table-room-name">—</strong>
+          <span class="muted" id="table-room-id"></span>
+        </div>
+        <div class="levels" id="table-levels"></div>
+        <div class="top-actions">
+          <span id="table-round" class="muted"></span>
+          <button id="btn-start" class="primary small" hidden>开始 / 下一局</button>
+          <button id="btn-leave" class="ghost small">离开</button>
+        </div>
+      </header>
+
+      <div class="table-area">
+        <div class="seats" id="seats"></div>
+        <div class="table-cards">
+          <div id="table-combo" class="combo-box"></div>
+          <div id="status-line" class="status"></div>
+        </div>
+      </div>
+
+      <div id="tribute-bar" class="tribute-bar" hidden></div>
+
+      <div class="hand-area">
+        <div class="hand-actions">
+          <button id="btn-hint" class="ghost small">提示</button>
+          <button id="btn-pass" class="ghost" hidden>过牌</button>
+          <button id="btn-play" class="primary" disabled>出牌</button>
+        </div>
+        <div id="hand" class="hand"></div>
+      </div>
+
+      <div id="toast" class="toast" hidden></div>
+    </section>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
