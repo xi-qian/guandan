@@ -96,13 +96,18 @@ def test_hand_sort_toggle_present():
 
 
 def test_combo_cards_ordered_server_side():
-    """牌型排列在服务端做，前端与 LLM 提示词都受益。"""
-    api = read("api/app.py")
-    llm = read("bot/llm_bot.py")
+    """牌型排列只在服务端做一次（identify 时），下游一律不二次重排。
+
+    含百搭时点数分组不整齐，二次重排会丢牌——踩过。
+    """
     engine = read("engine/combos.py")
+    game = read("engine/game.py")
     assert "def order_cards" in engine
-    assert "order_cards" in api, "API 序列化应按牌型排列"
-    assert "order_cards" in llm, "提示词里的出牌也应按牌型排列"
+    assert "rank_order" in engine, "identify 应按结构排牌"
+    assert "combo.cards" in game, "出牌事件应存结构序，而不是排序后的原始牌"
+    # 下游不得再重排
+    assert "order_cards(" not in read("api/app.py"), "API 不应二次重排"
+    assert "order_cards(" not in read("bot/llm_bot.py"), "提示词不应二次重排"
 
 
 
@@ -125,3 +130,13 @@ def test_interpret_picker_wired():
     assert "as_kind" in js and "as_kind" in api
     assert "showInterpretPicker" in js
     assert ".picker-overlay" in css
+
+
+def test_bot_package_has_no_engine_dependency():
+    """bot/ 是「外部 AI 接入样例」，只走 HTTP，不许 import engine——
+    否则就证明不了「AI 方便接入」。"""
+    import os
+    for fname in ("client.py", "llm_client.py", "llm_bot.py", "rules_text.py"):
+        src = read(f"bot/{fname}")
+        assert "from engine" not in src, f"bot/{fname} 不应依赖 engine"
+        assert "import engine" not in src, f"bot/{fname} 不应依赖 engine"
