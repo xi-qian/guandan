@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from engine.cards import CARD_BY_ID, RANK_LABEL
-from engine.combos import Combo
+from engine.combos import Combo, order_cards
 from engine.game import Game, IllegalMove
 
 STATIC_DIR = __file__.rsplit("/", 2)[0] + "/static"
@@ -130,7 +130,7 @@ def combo_json(combo: Combo | None, seat: int | None) -> dict[str, Any] | None:
         "kind": combo.kind,
         "kind_label": KIND_LABEL.get(combo.kind, combo.kind),
         "size": combo.size,
-        "cards": [card_json(c) for c in combo.cards],
+        "cards": [card_json(c) for c in order_cards(combo.cards, combo.kind)],
     }
 
 

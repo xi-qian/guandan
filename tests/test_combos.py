@@ -5,6 +5,7 @@ import pytest
 
 from engine.cards import CARD_BY_ID, DECK
 from engine.combos import (
+    order_cards,
     BOMB,
     PAIR,
     PAIR_RUN,
@@ -256,3 +257,69 @@ class TestEnumeration:
         for m in enumerate_combos(hand, "4"):
             assert identify(m.cards, "4") is not None
             assert all(c in hand for c in m.cards)
+
+
+
+class TestOrderCards:
+    """出牌要按牌型结构排列，便于阅读。用户点名：三带二应 3 在前 2 在后。"""
+
+    def test_triple_pair_triple_first(self):
+        ids = cards(("8", "♠"), ("3", "♥"), ("8", "♥"), ("3", "♠"), ("8", "♣"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        ranks = [DECK[i].rank for i in o]
+        assert ranks == ["8", "8", "8", "3", "3"], ranks
+
+    def test_triple_pair_lows_last(self):
+        ids = cards(("3", "♠"), ("K", "♥"), ("3", "♥"), ("K", "♠"), ("3", "♣"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["3", "3", "3", "K", "K"]
+
+    def test_straight_ascending(self):
+        ids = cards(("7", "♠"), ("3", "♥"), ("5", "♣"), ("4", "♦"), ("6", "♠"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["3", "4", "5", "6", "7"]
+
+    def test_ace_low_straight_puts_ace_first(self):
+        ids = cards(("5", "♠"), ("A", "♥"), ("3", "♣"), ("4", "♦"), ("2", "♠"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["A", "2", "3", "4", "5"]
+
+    def test_ace_high_straight_keeps_ace_last(self):
+        ids = cards(("10", "♠"), ("A", "♥"), ("Q", "♣"), ("J", "♦"), ("K", "♠"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["10", "J", "Q", "K", "A"]
+
+    def test_pair_run_groups_pairs(self):
+        ids = cards(("7", "♠"), ("5", "♥"), ("6", "♣"), ("5", "♦"), ("7", "♥"), ("6", "♠"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["5", "5", "6", "6", "7", "7"]
+
+    def test_triple_run_groups_triples(self):
+        ids = cards(("5", "♠"), ("4", "♥"), ("5", "♣"), ("4", "♦"), ("5", "♥"), ("4", "♠"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["4", "4", "4", "5", "5", "5"]
+
+    def test_bomb_by_rank(self):
+        ids = cards(("9", "♠"), ("9", "♥"), ("9", "♣"), ("9", "♦"))
+        c = identify(ids, "2")
+        assert len(order_cards(c.cards, c.kind)) == 4
+
+    def test_straight_flush_ascending(self):
+        ids = cards(("7", "♥"), ("3", "♥"), ("5", "♥"), ("4", "♥"), ("6", "♥"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert [DECK[i].rank for i in o] == ["3", "4", "5", "6", "7"]
+
+    def test_preserves_card_identity(self):
+        """排列只改顺序，不改牌。"""
+        ids = cards(("8", "♠"), ("3", "♥"), ("8", "♥"), ("3", "♠"), ("8", "♣"))
+        c = identify(ids, "2")
+        o = order_cards(c.cards, c.kind)
+        assert sorted(o) == sorted(c.cards)

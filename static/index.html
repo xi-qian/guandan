@@ -54,10 +54,16 @@
         </div>
       </div>
 
+      <details class="history-box" open>
+        <summary>本轮出牌记录 <span id="history-count" class="muted"></span></summary>
+        <div id="history" class="history"></div>
+      </details>
+
       <div id="tribute-bar" class="tribute-bar" hidden></div>
 
       <div class="hand-area">
         <div class="hand-actions">
+          <button id="btn-sort" class="ghost small">排序：点数</button>
           <button id="btn-hint" class="ghost small">提示</button>
           <button id="btn-pass" class="ghost" hidden>过牌</button>
           <button id="btn-play" class="primary" disabled>出牌</button>

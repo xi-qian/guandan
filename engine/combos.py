@@ -45,6 +45,53 @@ _TIER_STRAIGHT_FLUSH = 55
 _TIER_ROCKET = 1000
 
 
+def order_cards(card_ids: Sequence[int], kind: str) -> list[int]:
+    """按牌型结构排列牌张，便于阅读。
+
+    三带二 → 三张在前、对子在后
+    三连对 / 钢板 → 各组按点数递增，组内排在一起
+    顺子 / 同花顺 → 按点数递增（A 低顺时 A 排最前）
+    炸弹 / 单张 / 对子 / 三同张 → 按点数
+    """
+    from .cards import NATURAL as _NAT
+
+    def key(cid: int) -> tuple:
+        c = CARD_BY_ID[cid]
+        return (_NAT[c.rank], c.suit or "", c.id)
+
+    ids = list(card_ids)
+    if kind in (SINGLE, PAIR, TRIPLE, BOMB):
+        return sorted(ids, key=key)
+
+    counts: dict[str, list[int]] = {}
+    for cid in ids:
+        counts.setdefault(CARD_BY_ID[cid].rank, []).append(cid)
+
+    if kind == TRIPLE_PAIR:
+        triple = [r for r, v in counts.items() if len(v) == 3]
+        pair = [r for r, v in counts.items() if len(v) == 2]
+        out = []
+        for r in sorted(triple, key=lambda r: _NAT[r]):
+            out += sorted(counts[r], key=key)
+        for r in sorted(pair, key=lambda r: _NAT[r]):
+            out += sorted(counts[r], key=key)
+        return out
+
+    if kind in (PAIR_RUN, TRIPLE_RUN, STRAIGHT, STRAIGHT_FLUSH):
+        # A 低顺时 A 排最前（A2345 / AA2233 / AAA222）
+        a_low = "A" in counts and set(counts) == {"A"} | {
+            str(i) for i in range(2, len(counts) + 1)
+        }
+        def seq_key(r: str) -> int:
+            return 1 if (a_low and r == "A") else _NAT[r]
+        out = []
+        for r in sorted(counts, key=seq_key):
+            out += sorted(counts[r], key=key)
+        return out
+
+    return sorted(ids, key=key)
+
+
 @dataclass(frozen=True)
 class Combo:
     kind: str

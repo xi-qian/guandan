@@ -17,6 +17,7 @@ from typing import Any
 from .client import GuandanClient
 from .llm_client import LLMClient, LLMError
 from .rules_text import RULES_TEXT, SYSTEM_PROMPT
+from engine.combos import order_cards
 
 
 def _card_str(c: dict[str, Any]) -> str:
@@ -34,7 +35,15 @@ def _hand_str(cards: list[dict[str, Any]] | None) -> str:
 def _move_str(m: dict[str, Any]) -> str:
     if m.get("pass"):
         return "过牌"
-    return f"{m.get('kind_label', m.get('kind', '?'))}（{m.get('size')}张）：{_hand_str(m.get('cards'))}"
+    cards = m.get("cards") or []
+    if cards and m.get("kind") and not m.get("pass"):
+        try:
+            ids = [c["id"] for c in cards]
+            ordered = {c["id"]: c for c in cards}
+            cards = [ordered[i] for i in order_cards(ids, m["kind"])]
+        except Exception:
+            pass
+    return f"{m.get('kind_label', m.get('kind', '?'))}（{m.get('size')}张）：{_hand_str(cards)}"
 
 
 RANK_ORDER = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A", "SJ", "BJ"]

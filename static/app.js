@@ -12,7 +12,33 @@
     timer: null,
     hintIndex: 0,
     lastMoves: [],
+    sortMode: localStorage.getItem("gd_sort") || "rank",
   };
+
+  const SORT_LABEL = { rank: "点数", suit: "花色", group: "牌型" };
+
+  const SUIT_ORDER = { "♠": 0, "♥": 1, "♣": 2, "♦": 3 };
+  const RANK_VALUE = {};
+  ["2","3","4","5","6","7","8","9","10","J","Q","K","A"].forEach((r, i) => RANK_VALUE[r] = i + 2);
+  RANK_VALUE["SJ"] = 15; RANK_VALUE["BJ"] = 16;
+
+  function sortHand(hand) {
+    const a = [...hand];
+    if (state.sortMode === "suit") {
+      a.sort((x, y) => (SUIT_ORDER[x.suit] ?? 9) - (SUIT_ORDER[y.suit] ?? 9)
+        || RANK_VALUE[x.rank] - RANK_VALUE[y.rank] || x.id - y.id);
+    } else if (state.sortMode === "group") {
+      // 按同点数量分组：炸弹/三张/对子/单张聚在一起，组内按点数
+      const cnt = {};
+      a.forEach(c => cnt[c.rank] = (cnt[c.rank] || 0) + 1);
+      a.sort((x, y) => (cnt[y.rank] - cnt[x.rank])
+        || RANK_VALUE[x.rank] - RANK_VALUE[y.rank] || x.id - y.id);
+    } else {
+      a.sort((x, y) => RANK_VALUE[x.rank] - RANK_VALUE[y.rank]
+        || (SUIT_ORDER[x.suit] ?? 9) - (SUIT_ORDER[y.suit] ?? 9) || x.id - y.id);
+    }
+    return a;
+  }
 
   // ---------------------------------------------------------------- API
 
@@ -58,6 +84,44 @@
     el.hidden = false;
     clearTimeout(el._t);
     el._t = setTimeout(() => (el.hidden = true), ms);
+  }
+
+  function renderHistory(v, players) {
+    const box = $("history");
+    const count = $("history-count");
+    if (!box) return;
+    const plays = v.round_plays || [];
+    box.innerHTML = "";
+    if (count) count.textContent = plays.length ? `共 ${plays.length} 手` : "";
+    if (!plays.length) {
+      box.innerHTML = `<div class="muted">本局还没有出牌</div>`;
+      return;
+    }
+    plays.forEach((p, i) => {
+      const row = document.createElement("div");
+      row.className = "row" + (p.seat === v.you?.seat ? " mine" : "") + (p.passed ? " pass-row" : "");
+      const who = players[p.seat]?.name ?? `座位${p.seat}`;
+      const cardsWrap = document.createElement("div");
+      cardsWrap.className = "cards";
+      (p.cards || []).forEach((c) => cardsWrap.appendChild(cardEl(c, { mini: true })));
+      const label = p.passed ? "" : `${p.kind_label || ""} ${p.size || ""}张`;
+      row.innerHTML = `<span class="who">${who}</span>`;
+      row.appendChild(cardsWrap);
+      const lab = document.createElement("span");
+      lab.className = "label";
+      lab.textContent = label;
+      row.appendChild(lab);
+      box.appendChild(row);
+
+      // 在本轮最后一手后标出「当前桌面」
+      if (i === plays.length - 1 && v.table) {
+        const mark = document.createElement("div");
+        mark.className = "turn-mark";
+        mark.textContent = "── 当前桌面 ──";
+        box.appendChild(mark);
+      }
+    });
+    box.scrollTop = box.scrollHeight;
   }
 
   function renderJoin() {
@@ -130,6 +194,9 @@
       box.innerHTML = `<div class="muted">${v.phase === "play" ? "本轮自由出牌" : ""}</div>`;
     }
 
+    // 本轮出牌记录
+    renderHistory(v, players);
+
     // 状态栏
     const status = $("status-line");
     if (v.phase === "waiting") {
@@ -187,7 +254,7 @@
     // 手牌
     const hand = $("hand");
     hand.innerHTML = "";
-    (v.you.hand || []).forEach((c) => {
+    sortHand(v.you.hand || []).forEach((c) => {
       const el = cardEl(c, { selected: state.selected.has(c.id) });
       el.addEventListener("click", () => {
         if (state.selected.has(c.id)) state.selected.delete(c.id);
@@ -334,7 +401,9 @@
 
   function leave() {
     // 先告诉服务端离席，否则座位和名字一直占着，进不去
-    if (state.token && state.roomId) {
+    $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
+
+  if (state.token && state.roomId) {
       api(`/api/rooms/${state.roomId}/leave`, { method: "POST" }).catch(() => {});
     }
     stopPolling();
@@ -402,6 +471,13 @@
   $("btn-play").addEventListener("click", doPlay);
   $("btn-pass").addEventListener("click", doPass);
   $("btn-hint").addEventListener("click", doHint);
+  $("btn-sort").addEventListener("click", () => {
+    const modes = ["rank", "suit", "group"];
+    state.sortMode = modes[(modes.indexOf(state.sortMode) + 1) % modes.length];
+    localStorage.setItem("gd_sort", state.sortMode);
+    $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
+    if (state.view) renderTable(state.view);
+  });
   $("btn-start").addEventListener("click", doStart);
 
   // 回车提交
@@ -412,6 +488,8 @@
   }
 
   // 断线重连
+  $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
+
   if (state.token && state.roomId) {
     startPolling();
   } else {

@@ -72,3 +72,34 @@ def test_close_endpoint_routed_and_used():
     assert '@app.post("/api/rooms/{room_id}/close")' in api_src
     assert "idle_seconds" in api_src, "房间列表应带闲置秒数"
     assert "idle_seconds" in js, "前端应显示闲置时长"
+
+
+
+def test_play_history_ui_present():
+    html = read("static/index.html")
+    js = read("static/app.js")
+    assert 'id="history"' in html, "应有本轮出牌记录区"
+    assert 'id="history-count"' in html
+    assert "round_plays" in js, "前端应渲染 round_plays"
+    assert "renderHistory" in js
+
+
+def test_hand_sort_toggle_present():
+    html = read("static/index.html")
+    js = read("static/app.js")
+    assert 'id="btn-sort"' in html, "应有手牌排序按钮"
+    assert "sortHand" in js
+    assert "SORT_LABEL" in js
+    for mode in ("rank", "suit", "group"):
+        assert f'"{mode}"' in js, f"排序模式 {mode} 未实现"
+    assert "localStorage.getItem(\"gd_sort\")" in js, "排序偏好应记住"
+
+
+def test_combo_cards_ordered_server_side():
+    """牌型排列在服务端做，前端与 LLM 提示词都受益。"""
+    api = read("api/app.py")
+    llm = read("bot/llm_bot.py")
+    engine = read("engine/combos.py")
+    assert "def order_cards" in engine
+    assert "order_cards" in api, "API 序列化应按牌型排列"
+    assert "order_cards" in llm, "提示词里的出牌也应按牌型排列"
