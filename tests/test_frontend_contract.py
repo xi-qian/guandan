@@ -88,7 +88,7 @@ def test_hand_sort_toggle_present():
     html = read("static/index.html")
     js = read("static/app.js")
     assert 'id="btn-sort"' in html, "应有手牌排序按钮"
-    assert "sortHand" in js
+    assert "sortByMode" in js
     assert "SORT_LABEL" in js
     for mode in ("rank", "suit", "group"):
         assert f'"{mode}"' in js, f"排序模式 {mode} 未实现"
@@ -140,3 +140,34 @@ def test_bot_package_has_no_engine_dependency():
         src = read(f"bot/{fname}")
         assert "from engine" not in src, f"bot/{fname} 不应依赖 engine"
         assert "import engine" not in src, f"bot/{fname} 不应依赖 engine"
+
+
+def test_hand_free_arrangement_wired():
+    """手牌可自由拖动排序，选中多张可组合成一组整组拖动。"""
+    js = read("static/app.js")
+    html = read("static/index.html")
+    css = read("static/style.css")
+    for fn in ("reconcileOrder", "renderHand", "attachDrag", "groupSelected",
+               "ungroupSelected", "commitDrop", "sortByMode"):
+        assert fn in js, f"缺 {fn}"
+    assert 'id="btn-group"' in html and 'id="btn-ungroup"' in html
+    assert "pointerdown" in js, "拖动要用 pointer events（手机才好使）"
+    assert "drag-ghost" in js and ".drag-ghost" in css
+    assert ".group" in css and ".group-tag" in css
+    assert "touch-action: none" in css, "手牌区要禁掉浏览器手势"
+
+
+def test_hand_order_survives_server_sync():
+    """服务端手牌变化时，本地编排要保留仍在手的牌的顺序，新牌放末尾。"""
+    js = read("static/app.js")
+    src = js[js.index("function reconcileOrder"):js.index("function sortByMode")]
+    assert "live.has" in src, "要剔除已出掉的牌"
+    assert "next.push({ kind: \"single\", id: c.id })" in src, "新牌要补进编排"
+    assert "it.ids.filter" in src, "组合里被出掉的牌要从组里剔除"
+
+
+def test_hand_reorder_not_interrupted_by_polling():
+    """拖动中轮询重绘会把牌打乱，必须跳过。"""
+    js = read("static/app.js")
+    src = js[js.index("function renderHand"):js.index("function attachDrag")]
+    assert "DRAG.active" in src or "DRAG.item" in src, "拖动中应跳过重绘"

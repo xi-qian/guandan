@@ -13,6 +13,9 @@
     hintIndex: 0,
     lastMoves: [],
     sortMode: localStorage.getItem("gd_sort") || "rank",
+    // 手牌编排：有序 item 列表，每项是单张或一组
+    order: [],
+    cardById: {},
   };
 
   const SORT_LABEL = { rank: "点数", suit: "花色", group: "牌型" };
@@ -21,26 +24,6 @@
   const RANK_VALUE = {};
   ["2","3","4","5","6","7","8","9","10","J","Q","K","A"].forEach((r, i) => RANK_VALUE[r] = i + 2);
   RANK_VALUE["SJ"] = 15; RANK_VALUE["BJ"] = 16;
-
-  function sortHand(hand) {
-    const a = [...hand];
-    if (state.sortMode === "suit") {
-      a.sort((x, y) => (SUIT_ORDER[x.suit] ?? 9) - (SUIT_ORDER[y.suit] ?? 9)
-        || RANK_VALUE[x.rank] - RANK_VALUE[y.rank] || x.id - y.id);
-    } else if (state.sortMode === "group") {
-      // 按同点数量分组：炸弹/三张/对子/单张聚在一起，组内按点数
-      const cnt = {};
-      a.forEach(c => cnt[c.rank] = (cnt[c.rank] || 0) + 1);
-      a.sort((x, y) => (cnt[y.rank] - cnt[x.rank])
-        || RANK_VALUE[x.rank] - RANK_VALUE[y.rank] || x.id - y.id);
-    } else {
-      a.sort((x, y) => RANK_VALUE[x.rank] - RANK_VALUE[y.rank]
-        || (SUIT_ORDER[x.suit] ?? 9) - (SUIT_ORDER[y.suit] ?? 9) || x.id - y.id);
-    }
-    return a;
-  }
-
-  // ---------------------------------------------------------------- API
 
   async function api(path, options = {}) {
     const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
@@ -122,6 +105,266 @@
       }
     });
     box.scrollTop = box.scrollHeight;
+  }
+
+
+  // ---------------------------------------------------------------- 手牌编排
+  const DRAG = { active: false, item: null, index: -1, ghost: null, ph: null,
+                 holder: null, startX: 0, startY: 0 };
+
+  // item = {kind:'single', id} | {kind:'group', ids:[...]}
+
+  function flattenOrder(order) {
+    return (order || state.order).flatMap((it) => (it.kind === "group" ? it.ids : [it.id]));
+  }
+
+  function reconcileOrder(hand) {
+    const live = new Set(hand.map((c) => c.id));
+    state.cardById = {};
+    hand.forEach((c) => (state.cardById[c.id] = c));
+
+    const next = [];
+    for (const it of state.order) {
+      if (it.kind === "single") {
+        if (live.has(it.id)) next.push(it);
+      } else {
+        const ids = it.ids.filter((id) => live.has(id));
+        if (ids.length >= 2) next.push({ kind: "group", ids });
+        else if (ids.length === 1) next.push({ kind: "single", id: ids[0] });
+      }
+    }
+    const present = new Set(flattenOrder(next));
+    for (const c of hand) {
+      if (!present.has(c.id)) next.push({ kind: "single", id: c.id });
+    }
+    state.order = next;
+  }
+
+  function sortByMode(items) {
+    const RANK_VALUE = {};
+    ["2","3","4","5","6","7","8","9","10","J","Q","K","A"].forEach((r, i) => (RANK_VALUE[r] = i + 2));
+    RANK_VALUE["SJ"] = 15; RANK_VALUE["BJ"] = 16;
+    const SUIT_ORDER = { "♠": 0, "♥": 1, "♣": 2, "♦": 3 };
+    const keyOf = (id) => {
+      const c = state.cardById[id] || { rank: "2", suit: null, id };
+      return [RANK_VALUE[c.rank] ?? 0, SUIT_ORDER[c.suit] ?? 9, c.id];
+    };
+    const cmp = (a, b) => {
+      const ka = keyOf(a), kb = keyOf(b);
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+    };
+    const out = items.map((it) =>
+      it.kind === "group"
+        ? { kind: "group", ids: [...it.ids].sort(cmp) }
+        : { kind: "single", id: it.id }
+    );
+    if (state.sortMode === "group") {
+      const cnt = {};
+      flattenOrder(out).forEach((id) => {
+        const c = state.cardById[id];
+        if (c) cnt[c.rank] = (cnt[c.rank] || 0) + 1;
+      });
+      const headKey = (it) => {
+        const c = state.cardById[it.kind === "group" ? it.ids[0] : it.id];
+        return [-(cnt[c?.rank] || 0), RANK_VALUE[c?.rank] ?? 0, SUIT_ORDER[c?.suit] ?? 9];
+      };
+      out.sort((a, b) => {
+        const ka = headKey(a), kb = headKey(b);
+        return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2];
+      });
+    } else if (state.sortMode === "rank") {
+      out.sort((a, b) => cmp(a.kind === "group" ? a.ids[0] : a.id, b.kind === "group" ? b.ids[0] : b.id));
+    }
+    return out;
+  }
+
+  function groupSelected() {
+    const sel = [...state.selected];
+    if (sel.length < 2) {
+      toast("至少选两张才能组合");
+      return;
+    }
+    const want = new Set(sel);
+    const next = [];
+    let placed = false;
+    for (const it of state.order) {
+      const ids = (it.kind === "group" ? it.ids : [it.id]).filter((id) => !want.has(id));
+      if (ids.length === 0) continue;              // 整个被抽走
+      if (ids.length === 1) next.push({ kind: "single", id: ids[0] });
+      else next.push({ kind: "group", ids });
+      if (!placed && (it.kind === "group" ? it.ids : [it.id]).some((id) => want.has(id))) {
+        next.push({ kind: "group", ids: sel });
+        placed = true;
+      }
+    }
+    if (!placed) next.push({ kind: "group", ids: sel });
+    state.order = next;
+    state.selected.clear();
+    toast(`已组合 ${sel.length} 张，可整组拖动`);
+    renderTable(state.view);
+  }
+
+  function ungroupSelected() {
+    const sel = new Set(state.selected);
+    const next = [];
+    let changed = 0;
+    for (const it of state.order) {
+      if (it.kind === "group" && it.ids.some((id) => sel.has(id))) {
+        it.ids.forEach((id) => next.push({ kind: "single", id }));
+        changed++;
+      } else {
+        next.push(it);
+      }
+    }
+    if (!changed) {
+      toast("选中的牌不在组合里");
+      return;
+    }
+    state.order = next;
+    state.selected.clear();
+    toast(`已拆开 ${changed} 组`);
+    renderTable(state.view);
+  }
+
+
+  function renderHand() {
+    const hand = $("hand");
+    if (!hand) return;
+    // 拖动中不重绘，否则轮询会把拖到一半的牌打乱
+    if (DRAG.active || DRAG.item) return;
+    hand.innerHTML = "";
+    state.order.forEach((it, idx) => {
+      const holder = document.createElement("div");
+      holder.dataset.index = String(idx);
+      if (it.kind === "group") {
+        holder.className = "group";
+        it.ids.forEach((id) => {
+          const c = state.cardById[id];
+          if (!c) return;
+          holder.appendChild(cardEl(c, { selected: state.selected.has(id) }));
+        });
+        const tag = document.createElement("span");
+        tag.className = "group-tag";
+        tag.textContent = `${it.ids.length}张`;
+        holder.appendChild(tag);
+      } else {
+        holder.className = "single";
+        const c = state.cardById[it.id];
+        if (c) holder.appendChild(cardEl(c, { selected: state.selected.has(it.id) }));
+      }
+      attachDrag(holder, it);
+      hand.appendChild(holder);
+    });
+    // 按钮显隐
+    const selN = state.selected.size;
+    const selInGroup = state.order.some(
+      (it) => it.kind === "group" && it.ids.some((id) => state.selected.has(id))
+    );
+    const bg = $("btn-group"), bu = $("btn-ungroup");
+    if (bg) bg.hidden = selN < 2;
+    if (bu) bu.hidden = !selInGroup;
+  }
+
+  // ---- 指针拖动（桌面鼠标 + 手机触屏通用）
+  function attachDrag(holder, item) {
+    holder.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button !== 0) return;
+      DRAG.item = item;
+      DRAG.index = Number(holder.dataset.index);
+      DRAG.startX = e.clientX;
+      DRAG.startY = e.clientY;
+      DRAG.holder = holder;
+      DRAG.active = false;
+      holder.setPointerCapture?.(e.pointerId);
+    });
+
+    holder.addEventListener("pointermove", (e) => {
+      if (!DRAG.item) return;
+      const dx = e.clientX - DRAG.startX;
+      const dy = e.clientY - DRAG.startY;
+      if (!DRAG.active) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        startDrag(e);
+      }
+      moveGhost(e);
+      updatePlaceholder(e);
+    });
+
+    const finish = (e) => {
+      if (DRAG.active) {
+        commitDrop();
+      } else if (DRAG.item) {
+        // 未达拖动阈值 → 视为点选
+        const ids = item.kind === "group" ? item.ids : [item.id];
+        const allIn = ids.every((id) => state.selected.has(id));
+        ids.forEach((id) => (allIn ? state.selected.delete(id) : state.selected.add(id)));
+        renderHand();
+        const v = state.view;
+        if (v) {
+          $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
+        }
+      }
+      DRAG.item = null;
+      DRAG.active = false;
+    };
+    holder.addEventListener("pointerup", finish);
+    holder.addEventListener("pointercancel", finish);
+  }
+
+  function startDrag(e) {
+    DRAG.active = true;
+    const ghost = DRAG.holder.cloneNode(true);
+    ghost.className = "drag-ghost " + (DRAG.item.kind === "group" ? "group" : "single");
+    ghost.style.width = DRAG.holder.offsetWidth + "px";
+    document.body.appendChild(ghost);
+    DRAG.ghost = ghost;
+    DRAG.holder.classList.add("item-dragging");
+    const ph = document.createElement("div");
+    ph.className = "drag-placeholder";
+    DRAG.ph = ph;
+    moveGhost(e);
+  }
+
+  function moveGhost(e) {
+    if (!DRAG.ghost) return;
+    DRAG.ghost.style.left = e.clientX + "px";
+    DRAG.ghost.style.top = e.clientY + "px";
+  }
+
+  function updatePlaceholder(e) {
+    const hand = $("hand");
+    if (!hand || !DRAG.ph) return;
+    const items = [...hand.children].filter((el) => el !== DRAG.ph);
+    let target = null;
+    for (const el of items) {
+      const r = el.getBoundingClientRect();
+      if (e.clientX < r.left + r.width / 2) { target = el; break; }
+    }
+    if (target) hand.insertBefore(DRAG.ph, target);
+    else hand.appendChild(DRAG.ph);
+  }
+
+  function commitDrop() {
+    const hand = $("hand");
+    if (!hand || !DRAG.ph) return cleanupDrag();
+    const items = [...hand.children];
+    const phIndex = items.indexOf(DRAG.ph);
+    const order = [...state.order];
+    order.splice(DRAG.index, 1);
+    // 占位所在的新下标（去掉自己后）
+    const cardsBefore = items.slice(0, phIndex).filter((el) => el !== DRAG.holder).length;
+    const insertAt = Math.max(0, Math.min(order.length, cardsBefore));
+    order.splice(insertAt, 0, DRAG.item);
+    state.order = order;
+    cleanupDrag();
+    renderHand();
+  }
+
+  function cleanupDrag() {
+    DRAG.ghost?.remove();
+    DRAG.ph?.remove();
+    DRAG.holder?.classList.remove("item-dragging");
+    DRAG.ghost = DRAG.ph = DRAG.holder = DRAG.item = null;
   }
 
   function renderJoin() {
@@ -251,18 +494,9 @@
       tb.innerHTML = "";
     }
 
-    // 手牌
-    const hand = $("hand");
-    hand.innerHTML = "";
-    sortHand(v.you.hand || []).forEach((c) => {
-      const el = cardEl(c, { selected: state.selected.has(c.id) });
-      el.addEventListener("click", () => {
-        if (state.selected.has(c.id)) state.selected.delete(c.id);
-        else state.selected.add(c.id);
-        renderTable(v);
-      });
-      hand.appendChild(el);
-    });
+    // 手牌（按本地编排顺序渲染）
+    reconcileOrder(v.you.hand || []);
+    renderHand();
 
     // 按钮
     $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
@@ -504,7 +738,9 @@
     const m = state.lastMoves[state.hintIndex % state.lastMoves.length];
     state.hintIndex += 1;
     state.selected = new Set(m.card_ids || []);
-    renderTable(state.view);
+    renderHand();
+    const v = state.view;
+    if (v) $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
   }
 
   async function doStart() {
@@ -526,12 +762,16 @@
   $("btn-play").addEventListener("click", doPlay);
   $("btn-pass").addEventListener("click", doPass);
   $("btn-hint").addEventListener("click", doHint);
+  $("btn-group").addEventListener("click", groupSelected);
+  $("btn-ungroup").addEventListener("click", ungroupSelected);
   $("btn-sort").addEventListener("click", () => {
     const modes = ["rank", "suit", "group"];
     state.sortMode = modes[(modes.indexOf(state.sortMode) + 1) % modes.length];
     localStorage.setItem("gd_sort", state.sortMode);
     $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
-    if (state.view) renderTable(state.view);
+    // 手动编排会被覆盖：排序就是显式重排
+    state.order = sortByMode(state.order);
+    renderHand();
   });
   $("btn-start").addEventListener("click", doStart);
 

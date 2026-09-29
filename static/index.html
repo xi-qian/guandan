@@ -63,11 +63,14 @@
 
       <div class="hand-area">
         <div class="hand-actions">
+          <button id="btn-group" class="ghost small" hidden>组合</button>
+          <button id="btn-ungroup" class="ghost small" hidden>拆开</button>
           <button id="btn-sort" class="ghost small">排序：点数</button>
           <button id="btn-hint" class="ghost small">提示</button>
           <button id="btn-pass" class="ghost" hidden>过牌</button>
           <button id="btn-play" class="primary" disabled>出牌</button>
         </div>
+        <div class="muted hand-hint">长按拖动可调整顺序；选中多张点「组合」成一组，整组可一起拖</div>
         <div id="hand" class="hand"></div>
       </div>
 
