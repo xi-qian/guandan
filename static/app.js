@@ -15,6 +15,8 @@
     sortMode: localStorage.getItem("gd_sort") || "rank",
     // 手牌编排：有序 item 列表，每项是单张或一组
     order: [],
+    // 排序前的手动顺序快照，「还原」用
+    savedOrder: null,
     cardById: {},
   };
 
@@ -114,6 +116,21 @@
 
   // item = {kind:'single', id} | {kind:'group', ids:[...]}
 
+  function cloneItem(it) {
+    return it.kind === "group" ? { kind: "group", ids: [...it.ids] }
+                              : { kind: "single", id: it.id };
+  }
+
+  function restoreManualOrder() {
+    if (!state.savedOrder) {
+      toast("没有可还原的手动顺序");
+      return;
+    }
+    state.order = state.savedOrder.map(cloneItem);
+    renderHand();
+    toast("已还原手动顺序");
+  }
+
   function flattenOrder(order) {
     return (order || state.order).flatMap((it) => (it.kind === "group" ? it.ids : [it.id]));
   }
@@ -138,6 +155,24 @@
       if (!present.has(c.id)) next.push({ kind: "single", id: c.id });
     }
     state.order = next;
+
+    // 快照也要跟手牌对齐，否则还原会带回已出掉的牌
+    if (state.savedOrder) {
+      const live2 = live;
+      const snap = [];
+      for (const it of state.savedOrder) {
+        if (it.kind === "single") {
+          if (live2.has(it.id)) snap.push(it);
+        } else {
+          const ids = it.ids.filter((id) => live2.has(id));
+          if (ids.length >= 2) snap.push({ kind: "group", ids });
+          else if (ids.length === 1) snap.push({ kind: "single", id: ids[0] });
+        }
+      }
+      const inSnap = new Set(flattenOrder(snap));
+      for (const c of hand) if (!inSnap.has(c.id)) snap.push({ kind: "single", id: c.id });
+      state.savedOrder = snap;
+    }
   }
 
   function sortByMode(items) {
@@ -199,9 +234,10 @@
     }
     if (!placed) next.push({ kind: "group", ids: sel });
     state.order = next;
+    state.savedOrder = null;      // 手动改动后快照作废
     state.selected.clear();
     toast(`已组合 ${sel.length} 张，可整组拖动`);
-    renderTable(state.view);
+    renderHand();
   }
 
   function ungroupSelected() {
@@ -221,9 +257,10 @@
       return;
     }
     state.order = next;
+    state.savedOrder = null;
     state.selected.clear();
     toast(`已拆开 ${changed} 组`);
-    renderTable(state.view);
+    renderHand();
   }
 
 
@@ -260,9 +297,10 @@
     const selInGroup = state.order.some(
       (it) => it.kind === "group" && it.ids.some((id) => state.selected.has(id))
     );
-    const bg = $("btn-group"), bu = $("btn-ungroup");
+    const bg = $("btn-group"), bu = $("btn-ungroup"), br = $("btn-restore");
     if (bg) bg.hidden = selN < 2;
     if (bu) bu.hidden = !selInGroup;
+    if (br) br.hidden = !state.savedOrder;
   }
 
   // ---- 指针拖动（桌面鼠标 + 手机触屏通用）
@@ -356,6 +394,7 @@
     const insertAt = Math.max(0, Math.min(order.length, cardsBefore));
     order.splice(insertAt, 0, DRAG.item);
     state.order = order;
+    state.savedOrder = null;      // 手动拖动后快照作废
     cleanupDrag();
     renderHand();
   }
@@ -763,15 +802,18 @@
   $("btn-pass").addEventListener("click", doPass);
   $("btn-hint").addEventListener("click", doHint);
   $("btn-group").addEventListener("click", groupSelected);
+  $("btn-restore").addEventListener("click", restoreManualOrder);
   $("btn-ungroup").addEventListener("click", ungroupSelected);
   $("btn-sort").addEventListener("click", () => {
     const modes = ["rank", "suit", "group"];
     state.sortMode = modes[(modes.indexOf(state.sortMode) + 1) % modes.length];
     localStorage.setItem("gd_sort", state.sortMode);
     $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
-    // 手动编排会被覆盖：排序就是显式重排
+    // 存一份手动顺序，「还原」按钮可切回
+    if (!state.savedOrder) state.savedOrder = state.order.map(cloneItem);
     state.order = sortByMode(state.order);
     renderHand();
+    toast("已排序，点「还原手动顺序」可切回");
   });
   $("btn-start").addEventListener("click", doStart);
 

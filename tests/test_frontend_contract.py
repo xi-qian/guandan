@@ -171,3 +171,28 @@ def test_hand_reorder_not_interrupted_by_polling():
     js = read("static/app.js")
     src = js[js.index("function renderHand"):js.index("function attachDrag")]
     assert "DRAG.active" in src or "DRAG.item" in src, "拖动中应跳过重绘"
+
+
+def test_manual_order_restorable_after_sort():
+    """排序后要能还原原来手动排的顺序。"""
+    js = read("static/app.js")
+    html = read("static/index.html")
+    assert 'id="btn-restore"' in html, "应有还原按钮"
+    assert "restoreManualOrder" in js
+    assert "savedOrder" in js
+    assert "cloneItem" in js, "快照要深拷贝，别被后续改动污染"
+
+    # 排序前必须存快照（只在没有快照时存，避免覆盖原手动顺序）
+    assert "if (!state.savedOrder) state.savedOrder" in js, "排序时要存快照"
+
+    # 手动改动后快照作废
+    assert js.count("state.savedOrder = null") >= 3, (
+        "组合/拆开/拖动 三处手动改动都应作废快照"
+    )
+
+
+def test_saved_order_survives_hand_sync():
+    """快照也要随手牌变化剔除已出掉的牌，否则还原会带回不存在的牌。"""
+    js = read("static/app.js")
+    src = js[js.index("function reconcileOrder"):js.index("function sortByMode")]
+    assert "state.savedOrder" in src, "快照要跟着手牌对齐"
