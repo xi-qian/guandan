@@ -196,3 +196,28 @@ def test_saved_order_survives_hand_sync():
     js = read("static/app.js")
     src = js[js.index("function reconcileOrder"):js.index("function sortByMode")]
     assert "state.savedOrder" in src, "快照要跟着手牌对齐"
+
+
+def test_hand_render_skipped_when_unchanged():
+    """每次轮询都重建全部 DOM 会让 UI 闪且变慢，内容没变要跳过。"""
+    js = read("static/app.js")
+    assert "handSignature" in js, "要有内容签名"
+    src = js[js.index("function renderHand"):js.index("function updateHandButtons")]
+    assert "sig === lastHandSig" in src, "没变要跳过重绘"
+    assert "lastHandSig" in js
+    # 显式改动要强制重绘
+    assert js.count("renderHand(true)") >= 4, "拖动/组合/拆开/排序后应强制重绘"
+
+    # 出牌历史同样要跳过
+    hsrc = js[js.index("function renderHistory"):js.index("function renderJoin")]
+    assert "lastHistSig" in hsrc
+
+
+def test_poll_requests_deduped():
+    """快速点击会并发堆叠 poll 请求，要去重。"""
+    js = read("static/app.js")
+    assert "pollInFlight" in js
+    src = js[js.index("async function poll()"):]
+    src = src[:src.index("\n  function ")] if "\n  function " in src else src
+    assert "if (pollInFlight) return;" in src
+    assert "pollInFlight = false" in src, "finally 里要复位"

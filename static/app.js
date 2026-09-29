@@ -71,10 +71,17 @@
     el._t = setTimeout(() => (el.hidden = true), ms);
   }
 
+  let lastHistSig = "";
+
   function renderHistory(v, players) {
     const box = $("history");
     const count = $("history-count");
     if (!box) return;
+    const hist = v.round_plays || [];
+    const sig = hist.map((p) => `${p.seat}:${p.passed ? 0 : (p.cards || []).length}`).join(",")
+      + "#" + (v.table ? v.table.cards.map((c) => c.id).join(",") : "");
+    if (sig === lastHistSig) return;
+    lastHistSig = sig;
     const plays = v.round_plays || [];
     box.innerHTML = "";
     if (count) count.textContent = plays.length ? `共 ${plays.length} 手` : "";
@@ -127,7 +134,7 @@
       return;
     }
     state.order = state.savedOrder.map(cloneItem);
-    renderHand();
+    renderHand(true);
     toast("已还原手动顺序");
   }
 
@@ -237,7 +244,7 @@
     state.savedOrder = null;      // 手动改动后快照作废
     state.selected.clear();
     toast(`已组合 ${sel.length} 张，可整组拖动`);
-    renderHand();
+    renderHand(true);
   }
 
   function ungroupSelected() {
@@ -260,15 +267,30 @@
     state.savedOrder = null;
     state.selected.clear();
     toast(`已拆开 ${changed} 组`);
-    renderHand();
+    renderHand(true);
   }
 
 
-  function renderHand() {
+  let lastHandSig = "";
+
+  function handSignature() {
+    return state.order.map((it) =>
+      it.kind === "group" ? `G${it.ids.join(",")}` : `S${it.id}`
+    ).join("|") + "#" + [...state.selected].sort().join(",");
+  }
+
+  function renderHand(force) {
     const hand = $("hand");
     if (!hand) return;
     // 拖动中不重绘，否则轮询会把拖到一半的牌打乱
     if (DRAG.active || DRAG.item) return;
+    // 内容没变就不重建 DOM——每次都重建会闪且拖慢响应
+    const sig = handSignature();
+    if (!force && sig === lastHandSig) {
+      updateHandButtons();
+      return;
+    }
+    lastHandSig = sig;
     hand.innerHTML = "";
     state.order.forEach((it, idx) => {
       const holder = document.createElement("div");
@@ -292,7 +314,10 @@
       attachDrag(holder, it);
       hand.appendChild(holder);
     });
-    // 按钮显隐
+    updateHandButtons();
+  }
+
+  function updateHandButtons() {
     const selN = state.selected.size;
     const selInGroup = state.order.some(
       (it) => it.kind === "group" && it.ids.some((id) => state.selected.has(id))
@@ -336,7 +361,7 @@
         const ids = item.kind === "group" ? item.ids : [item.id];
         const allIn = ids.every((id) => state.selected.has(id));
         ids.forEach((id) => (allIn ? state.selected.delete(id) : state.selected.add(id)));
-        renderHand();
+        renderHand(true);
         const v = state.view;
         if (v) {
           $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
@@ -396,7 +421,7 @@
     state.order = order;
     state.savedOrder = null;      // 手动拖动后快照作废
     cleanupDrag();
-    renderHand();
+    renderHand(true);
   }
 
   function cleanupDrag() {
@@ -653,8 +678,13 @@
     }
   }
 
+  let pollInFlight = false;
+
   async function poll() {
     if (!state.token || !state.roomId) return;
+    // 去重：上一次还没回来就跳过，避免并发堆叠请求与重绘
+    if (pollInFlight) return;
+    pollInFlight = true;
     try {
       const v = await api(`/api/rooms/${state.roomId}/state`);
       renderTable(v);
@@ -664,6 +694,8 @@
         return;
       }
       // 网络抖动：忽略
+    } finally {
+      pollInFlight = false;
     }
   }
 
@@ -812,7 +844,7 @@
     // 存一份手动顺序，「还原」按钮可切回
     if (!state.savedOrder) state.savedOrder = state.order.map(cloneItem);
     state.order = sortByMode(state.order);
-    renderHand();
+    renderHand(true);
     toast("已排序，点「还原手动顺序」可切回");
   });
   $("btn-start").addEventListener("click", doStart);
