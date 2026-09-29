@@ -504,3 +504,61 @@ class TestRoundPlaysOrdering:
         assert [c["id"] for c in st2["table"]["cards"]] == \
                [c["id"] for c in st2["round_plays"][-1]["cards"]], \
                "桌面与出牌历史的牌序应一致"
+
+
+
+class TestRejoinWithoutExplicitLeave:
+    """直接关标签页/刷新时 leave() 不会执行，同名重入不能撞「名字已被使用」。"""
+
+    def test_stale_player_seat_is_reclaimable(self):
+        import time as _t
+        from api.app import rooms
+
+        rid, players = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth(players[0]))
+        # 模拟「关了标签页」：座位还占着，但人已 2 分钟没动静
+        rooms[rid].players[players[1]["token"]].last_seen = _t.time() - 120
+
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "P1"})
+        assert j.status_code == 200, j.text
+        assert j.json()["resumed"] is True
+        assert j.json()["seat"] == 1
+
+    def test_active_player_cannot_be_kicked_by_same_name(self):
+        rid, _ = make_room_with_players(4)
+        client.post(f"/api/rooms/{rid}/start", headers=auth({"token": "x"})) if False else None
+        r = client.post(f"/api/rooms/{rid}/join", json={"name": "P1"})
+        assert r.status_code == 400
+        assert "还在桌上" in r.json()["detail"]
+
+    def test_take_abandoned_seat_with_different_name(self):
+        """换了名字也要能进——接替任一离席座位。"""
+        import time as _t
+        from api.app import rooms
+
+        rid, players = make_room_with_players(4)
+        rooms[rid].players[players[2]["token"]].last_seen = _t.time() - 120
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "路人"})
+        assert j.status_code == 200
+        assert j.json()["seat"] == 2
+        assert j.json()["resumed"] is True
+
+    def test_old_token_invalidated_after_reclaim(self):
+        import time as _t
+        from api.app import rooms
+
+        rid, players = make_room_with_players(4)
+        old = players[0]["token"]
+        rooms[rid].players[old].last_seen = _t.time() - 120
+        j = client.post(f"/api/rooms/{rid}/join", json={"name": "P0"})
+        new = j.json()["token"]
+        assert client.get(f"/api/rooms/{rid}/state",
+                          headers={"Authorization": f"Bearer {new}"}).status_code == 200
+        assert client.get(f"/api/rooms/{rid}/state",
+                          headers={"Authorization": f"Bearer {old}"}).status_code == 401
+
+    def test_full_table_error_explains_how_to_get_in(self):
+        rid, _ = make_room_with_players(4)
+        r = client.post(f"/api/rooms/{rid}/join", json={"name": "新来"})
+        assert r.status_code == 400
+        assert "离席" in r.json()["detail"] or "接替" in r.json()["detail"]

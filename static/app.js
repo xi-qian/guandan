@@ -71,6 +71,58 @@
     el._t = setTimeout(() => (el.hidden = true), ms);
   }
 
+  // 三块独立重绘：各自的签名变了才动自己那块 DOM，
+  // 互不牵连（历史变了不该重建手牌）。
+  let lastSeatSig = "", lastTableSig = "";
+
+  function renderSeats(v, players) {
+    const seats = $("seats");
+    if (!seats) return;
+    const sig = JSON.stringify(players.map((p) => [
+      p.seat, p.name, p.hand_size, p.finished_rank, p.is_you,
+      v.current_seat === p.seat,
+    ]));
+    if (sig === lastSeatSig) return;
+    lastSeatSig = sig;
+    seats.innerHTML = "";
+    players.forEach((p) => {
+      const div = document.createElement("div");
+      div.className = "seat";
+      if (v.current_seat === p.seat && v.phase === "play") div.classList.add("active");
+      if (p.finished_rank) div.classList.add("done");
+      const badges = [];
+      if (p.is_you) badges.push("你");
+      if (p.finished_rank) badges.push(`第${p.finished_rank}名`);
+      if (p.seat % 2 === v.you?.team) badges.push("队友");
+      div.innerHTML = `
+        <div class="name">${p.name}${badges.length ? ` <span class="badge">${badges.join(" · ")}</span>` : ""}</div>
+        <div class="meta"><span>${p.hand_size == null ? "" : `剩 ${p.hand_size} 张`}</span><span>${p.seat === v.current_seat && v.phase === "play" ? "出牌中" : ""}</span></div>`;
+      seats.appendChild(div);
+    });
+
+  }
+
+  function renderTableCards(v, players) {
+    const box = $("table-combo");
+    if (!box) return;
+    const t = v.table;
+    const sig = t
+      ? `${t.seat}:${t.kind}:${t.cards.map((c) => c.id).join(",")}`
+      : `free:${v.phase}`;
+    if (sig === lastTableSig) return;
+    lastTableSig = sig;
+    box.innerHTML = "";
+    if (t) {
+      t.cards.forEach((c) => box.appendChild(cardEl(c, { mini: true })));
+      const label = document.createElement("div");
+      label.className = "muted";
+      label.textContent = ` ${t.kind_label} · ${players[t.seat]?.name ?? ""}`;
+      box.appendChild(label);
+    } else {
+      box.innerHTML = `<div class="muted">${v.phase === "play" ? "本轮自由出牌" : ""}</div>`;
+    }
+  }
+
   let lastHistSig = "";
 
   function renderHistory(v, players) {
@@ -119,7 +171,7 @@
 
   // ---------------------------------------------------------------- 手牌编排
   const DRAG = { active: false, item: null, index: -1, ghost: null, ph: null,
-                 holder: null, startX: 0, startY: 0 };
+                 holder: null, startX: 0, startY: 0, toggled: false };
 
   // item = {kind:'single', id} | {kind:'group', ids:[...]}
 
@@ -329,7 +381,27 @@
   }
 
   // ---- 指针拖动（桌面鼠标 + 手机触屏通用）
+  // 只切换 class，不重建 DOM——点一下就要立刻看到效果
+  function setCardSelected(id, on) {
+    const el = document.querySelector(`#hand [data-id="${id}"]`);
+    if (el) el.classList.toggle("selected", on);
+  }
+
+  function toggleSelection(ids) {
+    const allIn = ids.every((id) => state.selected.has(id));
+    ids.forEach((id) => {
+      if (allIn) state.selected.delete(id);
+      else state.selected.add(id);
+      setCardSelected(id, !allIn);
+    });
+    updateHandButtons();
+    const v = state.view;
+    if (v) $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
+  }
+
   function attachDrag(holder, item) {
+    const ids = item.kind === "group" ? item.ids : [item.id];
+
     holder.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button !== 0) return;
       DRAG.item = item;
@@ -338,6 +410,9 @@
       DRAG.startY = e.clientY;
       DRAG.holder = holder;
       DRAG.active = false;
+      // 立刻给反馈：按下就选中/取消，不必等抬手
+      toggleSelection(ids);
+      DRAG.toggled = true;
       holder.setPointerCapture?.(e.pointerId);
     });
 
@@ -347,28 +422,22 @@
       const dy = e.clientY - DRAG.startY;
       if (!DRAG.active) {
         if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        // 起拖了：撤销刚才的选中切换，拖动不该改变选中
+        if (DRAG.toggled) {
+          toggleSelection(ids);
+          DRAG.toggled = false;
+        }
         startDrag(e);
       }
       moveGhost(e);
       updatePlaceholder(e);
     });
 
-    const finish = (e) => {
-      if (DRAG.active) {
-        commitDrop();
-      } else if (DRAG.item) {
-        // 未达拖动阈值 → 视为点选
-        const ids = item.kind === "group" ? item.ids : [item.id];
-        const allIn = ids.every((id) => state.selected.has(id));
-        ids.forEach((id) => (allIn ? state.selected.delete(id) : state.selected.add(id)));
-        renderHand(true);
-        const v = state.view;
-        if (v) {
-          $("btn-play").disabled = !(v.your_turn && state.selected.size > 0);
-        }
-      }
+    const finish = () => {
+      if (DRAG.active) commitDrop();
       DRAG.item = null;
       DRAG.active = false;
+      DRAG.toggled = false;
     };
     holder.addEventListener("pointerup", finish);
     holder.addEventListener("pointercancel", finish);
@@ -464,42 +533,16 @@
       lv.appendChild(chip);
     });
 
-    // 座位
-    const seats = $("seats");
-    seats.innerHTML = "";
+    // 座位 / 桌面 / 历史 / 手牌：四块各自独立重绘
     const players = v.players || (v.seats || []).map((s) => ({
       seat: s.seat,
       name: s.name || `座位${s.seat}`,
       hand_size: null,
       is_you: s.seat === v.you?.seat,
     }));
-    players.forEach((p) => {
-      const div = document.createElement("div");
-      div.className = "seat";
-      if (v.current_seat === p.seat && v.phase === "play") div.classList.add("active");
-      if (p.finished_rank) div.classList.add("done");
-      const badges = [];
-      if (p.is_you) badges.push("你");
-      if (p.finished_rank) badges.push(`第${p.finished_rank}名`);
-      if (p.seat % 2 === v.you?.team) badges.push("队友");
-      div.innerHTML = `
-        <div class="name">${p.name}${badges.length ? ` <span class="badge">${badges.join(" · ")}</span>` : ""}</div>
-        <div class="meta"><span>${p.hand_size == null ? "" : `剩 ${p.hand_size} 张`}</span><span>${p.seat === v.current_seat && v.phase === "play" ? "出牌中" : ""}</span></div>`;
-      seats.appendChild(div);
-    });
-
+    renderSeats(v, players);
     // 桌面
-    const box = $("table-combo");
-    box.innerHTML = "";
-    if (v.table) {
-      v.table.cards.forEach((c) => box.appendChild(cardEl(c, { mini: true })));
-      const label = document.createElement("div");
-      label.className = "muted";
-      label.textContent = ` ${v.table.kind_label} · ${players[v.table.seat]?.name ?? ""}`;
-      box.appendChild(label);
-    } else {
-      box.innerHTML = `<div class="muted">${v.phase === "play" ? "本轮自由出牌" : ""}</div>`;
-    }
+    renderTableCards(v, players);
 
     // 本轮出牌记录
     renderHistory(v, players);
@@ -712,18 +755,25 @@
 
   function leave() {
     // 先告诉服务端离席，否则座位和名字一直占着，进不去
-    $("btn-sort").textContent = `排序：${SORT_LABEL[state.sortMode]}`;
-
-  if (state.token && state.roomId) {
-      api(`/api/rooms/${state.roomId}/leave`, { method: "POST" }).catch(() => {});
-    }
+    const room = state.roomId;
+    const tok = state.token;
     stopPolling();
     state.token = "";
     state.roomId = "";
     state.selected.clear();
+    state.order = [];
+    state.savedOrder = null;
     localStorage.removeItem("gd_token");
     localStorage.removeItem("gd_room");
     renderJoin();
+    // 离席通知放在最后发，失败也只影响座位释放（10 分钟后闲置回收兜底）
+    if (tok && room) {
+      const req = new Request(`/api/rooms/${room}/leave`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${tok}` },
+      });
+      fetch(req).catch(() => {});
+    }
   }
 
   async function submitPlay(cards, asKind, asMain) {

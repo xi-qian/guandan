@@ -23,6 +23,9 @@ STATIC_DIR = __file__.rsplit("/", 2)[0] + "/static"
 
 # 闲置多久的房间自动清理（秒）。正在打的桌会被轮询不断刷新，不会被误删。
 IDLE_TTL_SECONDS = 600
+# 同名接替的判定：对方超过这么久没请求，就认为已经走了
+# （覆盖「直接关标签页」这种来不及调 leave 的情况）
+STALE_PLAYER_SECONDS = 30
 
 
 app = FastAPI(title="掼蛋服务", version="0.1.0")
@@ -36,6 +39,13 @@ class Player:
     token: str
     seat: int
     left: bool = False   # 主动离席；牌局中保留座位供同名重入
+    last_seen: float = field(default_factory=time.time)
+
+    def touch(self) -> None:
+        self.last_seen = time.time()
+
+    def stale(self, ttl: float = STALE_PLAYER_SECONDS) -> bool:
+        return time.time() - self.last_seen > ttl
 
 
 @dataclass
@@ -98,7 +108,9 @@ def get_room(room_id: str, touch: bool = True) -> Room:
 def auth(room: Room, authorization: str | None) -> Player:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(401, "缺少 Authorization: Bearer <token>")
-    return room.by_token(authorization.split(" ", 1)[1].strip())
+    p = room.by_token(authorization.split(" ", 1)[1].strip())
+    p.touch()
+    return p
 
 
 # ---------------------------------------------------------------- 序列化
@@ -366,21 +378,47 @@ def join_room(room_id: str, body: JoinRoom) -> dict[str, Any]:
         raise HTTPException(400, "名字不能为空")
     # 同名重入：若该名字的玩家主动离席过，换新 token 回到原座位
     for old_token, p in list(room.players.items()):
-        if p.name == name:
-            if p.left:
-                token = secrets.token_hex(16)
-                p.left = False
-                p.token = token
-                del room.players[old_token]
-                room.players[token] = p
-                room.seats[p.seat] = p
-                return {"token": token, "seat": p.seat, "room_id": room_id,
-                        "resumed": True}
-            raise HTTPException(400, "该名字已被使用")
+        if p.name != name:
+            continue
+        # 接替条件：主动离席过，或已经很久没动静（直接关标签页的情况）
+        if p.left or p.stale():
+            token = secrets.token_hex(16)
+            p.left = False
+            p.token = token
+            p.touch()
+            del room.players[old_token]
+            room.players[token] = p
+            room.seats[p.seat] = p
+            return {"token": token, "seat": p.seat, "room_id": room_id,
+                    "resumed": True}
+        raise HTTPException(
+            400,
+            f"名字「{name}」还在桌上（{int(time.time() - p.last_seen)}秒前还活跃）。"
+            f"等 30 秒后可接替，或换名字接替离席座位。",
+        )
+
+    # 名字对不上时，接替任一「离席或长时间没动静」的座位——
+    # 否则「退出后换了名字进来」会撞「座位已满」，永远进不去。
+    for old_token, p in list(room.players.items()):
+        if p.left or p.stale():
+            token = secrets.token_hex(16)
+            p.left = False
+            p.token = token
+            p.name = name
+            del room.players[old_token]
+            room.players[token] = p
+            room.seats[p.seat] = p
+            return {"token": token, "seat": p.seat, "room_id": room_id,
+                    "resumed": True, "note": "接替了离席玩家的座位"}
 
     free = next((i for i, s in enumerate(room.seats) if s is None), None)
     if free is None:
-        raise HTTPException(400, "座位已满")
+        held = sum(1 for x in room.players.values() if x.left)
+        raise HTTPException(
+            400,
+            f"座位已满（4/4）。其中 {held} 人已离席但座位被保留着；"
+            f"换个名字可以接替他们的座位，或用原名「{name}」续接。",
+        )
     token = secrets.token_hex(16)
     p = Player(name=name, token=token, seat=free)
     room.players[token] = p

@@ -221,3 +221,48 @@ def test_poll_requests_deduped():
     src = src[:src.index("\n  function ")] if "\n  function " in src else src
     assert "if (pollInFlight) return;" in src
     assert "pollInFlight = false" in src, "finally 里要复位"
+
+
+def test_selection_feedback_is_immediate():
+    """点牌要立刻有反馈：按下即选中，且只切 class 不重建 DOM。"""
+    js = read("static/app.js")
+    assert "setCardSelected" in js, "选中要直接切 class"
+    assert "classList.toggle" in js
+
+    src = js[js.index("function attachDrag"):js.index("function startDrag")]
+    assert "pointerdown" in src
+    # 按下即选中（不等 pointerup）
+    down = src[src.index("pointerdown"):src.index("pointermove")]
+    assert "toggleSelection" in down, "按下就要给反馈，不能等抬手"
+
+    # 拖动起手时撤销误选
+    move = src[src.index("pointermove"):]
+    assert "toggleSelection(ids)" in move, "起拖要撤销刚才的选中"
+
+    # 选中切换不得触发全量重建
+    ts = js[js.index("function toggleSelection"):js.index("function attachDrag")]
+    assert "renderHand(" not in ts, "选中不该重建 DOM"
+
+
+def test_four_render_blocks_are_independent():
+    """座位/桌面/历史/手牌四块各自带签名，一块变了不重建其它块。
+
+    用户建议：历史的重绘和手牌、桌面应该分开——之前都挂在
+    renderTable 里一起清空重建。
+    """
+    js = read("static/app.js")
+    for fn in ("renderSeats", "renderTableCards", "renderHistory", "renderHand"):
+        assert f"function {fn}" in js, f"缺 {fn}"
+
+    # 每块都有自己的签名与「没变就返回」
+    for sig in ("lastSeatSig", "lastTableSig", "lastHistSig", "lastHandSig"):
+        assert sig in js, f"缺签名 {sig}"
+
+    # renderTable 只做分发，不直接操作那四块 DOM
+    seg = js[js.index("function renderTable(v)"):js.index("function refreshRooms")]
+    for dom in ('$("seats")', '$("table-combo")', '$("history")', '$("hand")'):
+        assert dom not in seg, f"renderTable 不应直接碰 {dom}"
+
+    # renderTable 里要算好 players 再分发
+    assert "renderSeats(v, players)" in seg
+    assert "renderTableCards(v, players)" in seg
